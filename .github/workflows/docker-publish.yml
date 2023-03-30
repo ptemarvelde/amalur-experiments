@@ -63,9 +63,8 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           
       - name: Pull required repos
-        run: ./setup.sh
-        shell: bash
-        
+        run: bash setup.sh
+
 
       # Build and push Docker image with Buildx (don't push on PR)
       # https://github.com/docker/build-push-action
