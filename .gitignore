@@ -1,5 +1,4 @@
-!results/
-*.log
+logs/
 amalur-cost-estimation
 amalur-factorization
 MorpheusPy
