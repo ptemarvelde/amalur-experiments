@@ -9,18 +9,25 @@ RUN conda install -y -c intel mkl
 
 WORKDIR /user/src/app
 
+# Move all files into place
+
+COPY MorpheusPy/examples/data amalur-factorization/data/Hamlet
+
+COPY sparse_dot sparse_dot
+RUN pip install ./sparse_dot
+
+
 COPY amalur-factorization/requirements.txt requirements.txt
 RUN pip install -r requirements.txt
 
-# Move all files into place
-COPY sparse_dot sparse_dot
-RUN pip install ./sparse_dot
 
 COPY amalur-cost-estimation amalur-cost-estimation
 RUN pip install ./amalur-cost-estimation
 RUN cp -r amalur-cost-estimation/estimator amalur-factorization/
 
-COPY MorpheusPy/examples/data amalur-factorization/data/Hamlet
+COPY amalur-data-generator amalur-data-generator
+RUN pip install ./amalur-data-generator
+RUN cp -r amalur-data-generator/generator amalur-factorization
 
 COPY amalur-factorization amalur-factorization
 RUN ls amalur-factorization
