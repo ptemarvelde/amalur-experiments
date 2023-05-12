@@ -1,4 +1,7 @@
-FROM continuumio/miniconda3:latest
+FROM continuumio/miniconda3
+RUN conda create -n env python=3.9
+RUN echo "source activate env" > ~/.bashrc
+ENV PATH /opt/conda/envs/env/bin:$PATH
 
 RUN apt update && apt install linux-perf -y && cp /usr/bin/perf_5.10 /usr/bin/perf_5.4
 RUN apt-get update
@@ -34,7 +37,7 @@ RUN ls amalur-factorization
 RUN pip install ./amalur-factorization
 
 WORKDIR  /user/src/app/amalur-factorization
-RUN mkdir results
+RUN mkdir -p results
 CMD ["python", "hamlet_experiments_hardware.py"]
 
 #docker build -t amalur_parallel .
