@@ -1,4 +1,6 @@
 FROM continuumio/miniconda3
+
+# Create python3.9 env to use
 RUN conda create -n env python=3.9
 RUN echo "source activate env" > ~/.bashrc
 ENV PATH /opt/conda/envs/env/bin:$PATH
@@ -7,7 +9,7 @@ RUN apt update && apt install linux-perf -y && cp /usr/bin/perf_5.10 /usr/bin/pe
 RUN apt-get update
 RUN apt-get install -y git
 
-RUN conda install -y Cython matplotlib numpy pandas plotly scipy setuptools tqdm
+RUN conda install -y Cython matplotlib numpy pandas plotly scipy setuptools tqdm cupy-cuda101
 RUN conda install -y -c intel mkl
 
 WORKDIR /user/src/app
@@ -15,6 +17,7 @@ WORKDIR /user/src/app
 # Move all files into place
 
 COPY MorpheusPy/examples/data amalur-factorization/data/Hamlet
+ENV DATA_ROOT=/user/src/app/amalur-factorization/data/Hamlet
 
 COPY sparse_dot sparse_dot
 RUN pip install ./sparse_dot
