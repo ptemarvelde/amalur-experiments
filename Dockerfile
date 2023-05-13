@@ -9,8 +9,9 @@ RUN apt update && apt install linux-perf -y && cp /usr/bin/perf_5.10 /usr/bin/pe
 RUN apt-get update
 RUN apt-get install -y git
 
-RUN conda install -y Cython matplotlib numpy pandas plotly scipy setuptools tqdm cupy-cuda101
-RUN conda install -y -c intel mkl
+RUN conda install -y Cython matplotlib numpy pandas plotly scipy setuptools tqdm &&\
+    conda install -y -c intel mkl &&\
+    python -m pip install cupy-cuda101
 
 WORKDIR /user/src/app
 
