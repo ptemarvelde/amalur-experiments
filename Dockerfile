@@ -10,7 +10,7 @@ RUN apt-get update
 RUN apt-get install -y git
 
 RUN conda install -y Cython matplotlib numpy pandas plotly scipy setuptools tqdm &&\
-    conda install -y -c intel mkl &&
+    conda install -y -c intel mkl
 
 WORKDIR /user/src/app
 
