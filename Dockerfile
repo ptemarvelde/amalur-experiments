@@ -6,7 +6,7 @@ ENV PATH /opt/conda/envs/env/bin:$PATH
 
 RUN apt update && apt install linux-perf -y && cp /usr/bin/perf_5.10 /usr/bin/perf_5.4
 RUN apt-get update
-RUN apt-get install -y git
+RUN apt-get install -y git nano
 
 RUN conda install -y Cython matplotlib numpy pandas plotly scipy setuptools tqdm &&\
     conda install -y -c intel mkl
