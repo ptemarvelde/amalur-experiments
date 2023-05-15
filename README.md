@@ -12,4 +12,4 @@
 Github action pipeline is configured to build an amalur Docker image.
  - Created in github action flow by first running [`setup.sh`](./setup.sh) and then `docker build`
 
-Image is tagged: ghcr.io/ptemarvelde/amalur-experiments-latest
+Image is tagged: `ghcr.io/ptemarvelde/amalur-experiments:latest`
