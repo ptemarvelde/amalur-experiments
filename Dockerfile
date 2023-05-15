@@ -2,7 +2,6 @@ FROM continuumio/miniconda3
 
 # Create python3.9 env to use
 RUN conda create -n env python=3.9
-RUN echo "source activate env" > ~/.bashrc
 ENV PATH /opt/conda/envs/env/bin:$PATH
 
 RUN apt update && apt install linux-perf -y && cp /usr/bin/perf_5.10 /usr/bin/perf_5.4
@@ -41,7 +40,16 @@ RUN pip install ./amalur-factorization
 
 WORKDIR  /user/src/app/amalur-factorization
 RUN mkdir -p results
+
+# Activate the environment and copy libcu* files needed for cupy to the corret cir
+RUN echo "conda activate && source activate env" > ~/.bashrc
+
+RUN cat > ~/.bashrc << 'EOF'\
+conda activate && source activate env\
+export LD_LIBRARY_PATH=/usr/lib/x86\
+EOF
+
 CMD ["python", "hamlet_experiments_hardware.py"]
 
 #docker build -t amalur_parallel .
-#ssh wenbosun@st4.ewi.tudelft.nl
+#ssh wenbosun@st4.ewi.tudelft.nl2342
