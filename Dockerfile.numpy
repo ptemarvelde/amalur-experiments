@@ -1,10 +1,16 @@
-FROM cupy/cupy:v12.0.0
+FROM continuumio/miniconda3
 
-RUN apt update
-RUN apt install -y git nano
+# Create python3.9 env to use
+RUN conda create -n env python=3.9
+RUN echo "source activate env" > ~/.bashrc
+ENV PATH /opt/conda/envs/env/bin:$PATH
 
-RUN pip3 install Cython matplotlib numpy pandas plotly scipy setuptools tqdm
-    # conda install -y -c intel mkl
+RUN apt update && apt install linux-perf -y && cp /usr/bin/perf_5.10 /usr/bin/perf_5.4
+RUN apt-get update
+RUN apt-get install -y git nano
+
+RUN conda install -y Cython matplotlib numpy pandas plotly scipy setuptools tqdm &&\
+    conda install -y -c intel mkl
 
 WORKDIR /user/src/app
 
@@ -36,3 +42,6 @@ RUN pip install ./amalur-factorization
 WORKDIR  /user/src/app/amalur-factorization
 RUN mkdir -p results
 CMD ["python", "hamlet_experiments_hardware.py"]
+
+#docker build -t amalur_parallel .
+#ssh wenbosun@st4.ewi.tudelft.nl
