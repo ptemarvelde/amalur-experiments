@@ -35,4 +35,8 @@ RUN pip install ./amalur-factorization
 
 WORKDIR  /user/src/app/amalur-factorization
 RUN mkdir -p results
+
+ENV USE_GPU=True
+ENV USE_MKL=False
+
 CMD ["python", "hamlet_experiments_hardware.py"]
