@@ -3,6 +3,14 @@ FROM cupy/cupy:v12.0.0
 RUN apt update
 RUN apt install -y git nano
 
+# install cuda nsight tools
+RUN apt-get update && \
+	apt-get install -y linux-headers-$(uname -r) wget && \
+	wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.0-1_all.deb && \
+	dpkg -i cuda-keyring_1.0-1_all.deb && \
+	apt-get update && \
+	apt-get install -y cuda-11.8 || apt -y --fix-broken install
+
 RUN pip3 install Cython matplotlib numpy pandas plotly scipy setuptools tqdm
     # conda install -y -c intel mkl
 
