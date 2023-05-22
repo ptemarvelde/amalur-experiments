@@ -4,7 +4,7 @@ RUN apt update
 RUN apt install -y git nano
 
 # install cuda nsight tools
-RUN apt-get update && \
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
 	apt-get install -y linux-headers-$(uname -r) wget && \
 	wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.0-1_all.deb && \
 	dpkg -i cuda-keyring_1.0-1_all.deb && \
