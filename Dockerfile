@@ -2,6 +2,7 @@ FROM cupy/cupy:v12.0.0
 
 RUN apt update
 RUN apt install -y git nano
+ENV CUDA_VERSION=11.7
 
 # install cuda nsight tools
 RUN apt-get update && \
@@ -9,7 +10,11 @@ RUN apt-get update && \
 	wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.0-1_all.deb && \
 	dpkg -i cuda-keyring_1.0-1_all.deb && \
 	apt-get update && \
-	DEBIAN_FRONTEND=noninteractive apt-get install -y cuda-11.7 || apt -y --fix-broken install
+	DEBIAN_FRONTEND=noninteractive apt-get install -y cuda-${CUDA_VERSION} || apt -y --fix-broken install
+
+RUN update-alternatives --set cuda /usr/local/cuda-${CUDA_VERSION}
+ENV LD_LIBRARY_PATH=/usr/local/cuda-${CUDA_VERSION}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+ENV PATH=/usr/local/cuda-${CUDA_VERSION}/bin${PATH:+:${PATH}}
 
 RUN pip3 install Cython matplotlib numpy pandas plotly scipy setuptools tqdm
     # conda install -y -c intel mkl
@@ -46,5 +51,6 @@ RUN mkdir -p results
 
 ENV USE_GPU=True
 ENV USE_MKL=False
+
 
 CMD ["python", "hamlet_experiments_hardware.py"]
