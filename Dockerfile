@@ -10,7 +10,6 @@ RUN apt-get update && \
 	dpkg -i cuda-keyring_1.0-1_all.deb && \
 	apt-get update && \
 	DEBIAN_FRONTEND=noninteractive apt-get install -y cuda-${CUDA_VERSION} || apt -y --fix-broken install && \
-	apt-auto -y install intel-mkl
 
 RUN update-alternatives --set cuda /usr/local/cuda-${CUDA_VERSION}
 ENV LD_LIBRARY_PATH=/usr/local/cuda-${CUDA_VERSION}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
