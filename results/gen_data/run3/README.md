@@ -1,5 +1,5 @@
-Very incomplete run. quit after rror like: 
-
+Very incomplete run. quit after error like: 
+```
 Dataset progression:   1%|          | 8/972 [26:42<53:38:11, 200.30s/it]
 Traceback (most recent call last):
   File "/user/src/app/amalur-factorization/experiment.py", line 392, in <module>
@@ -12,3 +12,4 @@ Traceback (most recent call last):
     result += multi_dot([self.I[k], self.S[k], self.M[k].T])
   File "/opt/conda/lib/python3.10/site-packages/scipy/sparse/_base.py", line 468, in __add__
     raise ValueError("inconsistent shapes")
+```

@@ -15,6 +15,7 @@ Results with data generated with params (from `generate.py`):
 ```
 
 Notes:
+ - INCOMPLETE. Stopped after like 170 datasets due to uncaught error
  - Run on a e2-highcpu-32 GCP VM. 32 cores, clockspeed: 2249.998 MHz
  - A dataset could not be generated for some combinations of parameters.
  - 
