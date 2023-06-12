@@ -1,21 +1,16 @@
-FROM cupy/cupy:v12.0.0
+FROM continuumio/miniconda3
 
-RUN apt update
-RUN apt install -y git nano
-ENV CUDA_VERSION=11.7
-# install cuda nsight tools
-RUN apt-get update && \
-	apt-get install -y linux-headers-$(uname -r) wget && \
-	wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.0-1_all.deb && \
-	dpkg -i cuda-keyring_1.0-1_all.deb && \
-	apt-get update && \
-	DEBIAN_FRONTEND=noninteractive apt-get install -y cuda-${CUDA_VERSION} || apt -y --fix-broken install
+# Create python3.9 env to use
+RUN conda create -n env python=3.9
+RUN echo "source activate env" > ~/.bashrc
+ENV PATH /opt/conda/envs/env/bin:$PATH
 
-RUN update-alternatives --set cuda /usr/local/cuda-${CUDA_VERSION}
-ENV LD_LIBRARY_PATH=/usr/local/cuda-${CUDA_VERSION}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
-ENV PATH=/usr/local/cuda-${CUDA_VERSION}/bin${PATH:+:${PATH}}
+RUN apt update && apt install linux-perf -y && cp /usr/bin/perf_5.10 /usr/bin/perf_5.4
+RUN apt-get update
+RUN apt-get install -y git nano
 
-RUN pip3 install Cython matplotlib numpy pandas plotly scipy setuptools tqdm mkl
+RUN conda install -y Cython matplotlib numpy pandas plotly scipy setuptools tqdm &&\
+    conda install -y -c intel mkl
 
 WORKDIR /user/src/app
 
@@ -46,9 +41,7 @@ RUN pip install ./amalur-factorization
 
 WORKDIR  /user/src/app/amalur-factorization
 RUN mkdir -p results
-
-ENV USE_GPU=True
-ENV USE_MKL=False
-
-
 CMD ["python", "hamlet_experiments_hardware.py"]
+
+#docker build -t amalur_parallel .
+#ssh wenbosun@st4.ewi.tudelft.nl
