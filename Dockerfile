@@ -9,7 +9,7 @@ RUN apt-get update && \
 	wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.0-1_all.deb && \
 	dpkg -i cuda-keyring_1.0-1_all.deb && \
 	apt-get update && \
-	apt install intel-mkl -y &&\
+	yes '\n' | apt install intel-mkl -y &&\
 	DEBIAN_FRONTEND=noninteractive apt-get install -y cuda-${CUDA_VERSION} || apt -y --fix-broken install
 
 RUN update-alternatives --set cuda /usr/local/cuda-${CUDA_VERSION}
