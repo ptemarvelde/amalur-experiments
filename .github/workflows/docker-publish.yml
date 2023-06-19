@@ -27,15 +27,16 @@ jobs:
       # with sigstore/fulcio when running outside of PRs.
       id-token: write
 
+
+
     steps:
       - name: clean some space
-      - shell: bash
-      - run: |
+        shell: bash
+        run: |
           echo $(df -h)
           rm -rf /opt/hostedtoolcache
           echo $(df -h)
 
-    steps:
       - name: Checkout repository
         uses: actions/checkout@v3
 
