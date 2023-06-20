@@ -16,7 +16,7 @@ RUN update-alternatives --set cuda /usr/local/cuda-${CUDA_VERSION}
 ENV LD_LIBRARY_PATH=/usr/local/cuda-${CUDA_VERSION}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
 ENV PATH=/usr/local/cuda-${CUDA_VERSION}/bin${PATH:+:${PATH}}
 
-RUN pip3 install Cython matplotlib numpy pandas plotly scipy setuptools tqdm mkl
+RUN pip3 install Cython matplotlib numpy pandas plotly scipy setuptools tqdm mkl pyarrow
 
 WORKDIR /user/src/app
 
@@ -28,10 +28,8 @@ ENV DATA_ROOT=/user/src/app/amalur-factorization/data/Hamlet
 COPY sparse_dot sparse_dot
 RUN pip install ./sparse_dot
 
-
 COPY amalur-factorization/requirements.txt requirements.txt
 RUN pip install -r requirements.txt
-
 
 COPY amalur-cost-estimation amalur-cost-estimation
 RUN pip install ./amalur-cost-estimation
