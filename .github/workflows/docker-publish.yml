@@ -27,8 +27,6 @@ jobs:
       # with sigstore/fulcio when running outside of PRs.
       id-token: write
 
-
-
     steps:
       - name: clean some space
         shell: bash

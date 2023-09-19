@@ -1,23 +1,8 @@
-FROM cupy/cupy:v12.0.0
-
-RUN apt update
-RUN apt install -y git nano
-ENV CUDA_VERSION=12.1
-# install cuda nsight tools
+FROM nvidia/cuda:12.1.1-base-ubuntu20.04
 RUN apt-get update && \
-	apt-get install -y linux-headers-$(uname -r) wget && \
-	wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.0-1_all.deb && \
-	dpkg -i cuda-keyring_1.0-1_all.deb && \
-	apt-get update && \
-	DEBIAN_FRONTEND=noninteractive apt install -y intel-mkl &&\
-	DEBIAN_FRONTEND=noninteractive apt-get install -y cuda-${CUDA_VERSION} || apt -y --fix-broken install
-
-RUN update-alternatives --set cuda /usr/local/cuda-${CUDA_VERSION}
-ENV LD_LIBRARY_PATH=/usr/local/cuda-${CUDA_VERSION}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
-ENV PATH=/usr/local/cuda-${CUDA_VERSION}/bin${PATH:+:${PATH}}
+    apt-get install -y python3-pip python3-dev git nano
 
 RUN pip3 install Cython matplotlib numpy pandas plotly scipy setuptools tqdm mkl pyarrow
-
 WORKDIR /user/src/app
 
 # Move all files into place
@@ -48,6 +33,5 @@ RUN mkdir -p results
 
 ENV USE_GPU=True
 ENV USE_MKL=False
-
 
 CMD ["python", "hamlet_experiments_hardware.py"]

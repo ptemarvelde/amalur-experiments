@@ -4,3 +4,8 @@ amalur-factorization
 MorpheusPy
 sparse_dot
 /amalur-data-generator/
+/sigmod24/
+/results/sigmod24/complexity_bruteforce/2023-06-12_19-37-51_022637_results.log.gz
+/amalur-cost-estimation/experiments/configs/
+.idea/
+results/
