@@ -6,7 +6,6 @@ RUN pip3 install Cython matplotlib numpy pandas plotly scipy setuptools tqdm mkl
 WORKDIR /user/src/app
 
 # Move all files into place
-
 COPY MorpheusPy/examples/data amalur-factorization/data/Hamlet
 ENV DATA_ROOT=/user/src/app/amalur-factorization/data/Hamlet
 
@@ -33,6 +32,5 @@ RUN mkdir -p results
 
 ENV USE_GPU=True
 ENV USE_MKL=False
-RUN pip3 install cupy==12.1.0
 
 CMD ["python", "hamlet_experiments_hardware.py"]
