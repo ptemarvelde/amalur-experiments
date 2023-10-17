@@ -11,27 +11,28 @@ COPY MorpheusPy/examples/data amalur-factorization/data/Hamlet
 ENV DATA_ROOT=/user/src/app/amalur-factorization/data/Hamlet
 
 COPY sparse_dot sparse_dot
-RUN pip install ./sparse_dot
+RUN pip3 install ./sparse_dot
 
 COPY amalur-factorization/requirements.txt requirements.txt
-RUN pip install -r requirements.txt
+RUN pip3 install -r requirements.txt
 
 COPY amalur-cost-estimation amalur-cost-estimation
-RUN pip install ./amalur-cost-estimation
+RUN pip3 install ./amalur-cost-estimation
 RUN cp -r amalur-cost-estimation/estimator amalur-factorization/
 
 COPY amalur-data-generator amalur-data-generator
-RUN pip install ./amalur-data-generator
+RUN pip3 install ./amalur-data-generator
 RUN cp -r amalur-data-generator/generator amalur-factorization
 
 COPY amalur-factorization amalur-factorization
 RUN ls amalur-factorization
-RUN pip install ./amalur-factorization
+RUN pip3 install ./amalur-factorization
 
 WORKDIR  /user/src/app/amalur-factorization
 RUN mkdir -p results
 
 ENV USE_GPU=True
 ENV USE_MKL=False
+RUN pip3 install cupy==12.1.0
 
 CMD ["python", "hamlet_experiments_hardware.py"]

@@ -85,8 +85,9 @@ jobs:
         uses: docker/build-push-action@ac9327eae2b366085ac7f6a2d02df8aa8ead720a
         with:
           context: .
+          file: Dockerfile.daic
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ghcr.io/ptemarvelde/amalur-cupy:latest
+          tags: ghcr.io/ptemarvelde/amalur-daic:latest
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
