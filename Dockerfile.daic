@@ -1,6 +1,7 @@
 FROM nvidia/cuda:12.1.1-devel-ubuntu20.04
 RUN apt-get update && \
-    apt-get install -y python3-pip python3-dev git nano
+    apt-get install -y python3-pip python3-dev git nano && \
+    DEBIAN_FRONTEND=noninteractive apt install -y intel-mkl
 
 RUN pip3 install Cython matplotlib numpy pandas plotly scipy setuptools tqdm mkl pyarrow
 WORKDIR /user/src/app
