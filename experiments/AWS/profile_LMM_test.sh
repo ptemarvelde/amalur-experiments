@@ -1,3 +1,4 @@
+#!/bin/bash
 CUPY_PROFILE=True ncu --csv -f --profile-from-start no \
 --metric "dram__bytes_read.sum","dram__bytes_write.sum" \
 --section "MemoryWorkloadAnalysis" \
