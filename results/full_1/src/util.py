@@ -9,111 +9,106 @@ import numpy as np
 pd.options.mode.chained_assignment = None  # default='warn'
 
 
-def read_runtime_gpu(type_="synthetic", from_raw=False) -> pd.DataFrame:
-    if type_ not in ["synthetic", "hamlet"]:
+def read_runtime(dataset_type, compute_type, from_raw=False) -> pd.DataFrame:
+    if dataset_type not in ["synthetic", "hamlet", "tpc_ai"]:
         raise ValueError(
-            f"Invalid 'type' specified: {type_}. Must be one of 'synthetic', 'hamlet'"
+            f"Invalid 'dataset_type' specified: {dataset_type}. Must be one of 'synthetic', 'hamlet', 'tpc_ai'"
         )
 
-    outfile = f"daic/runtime/runtime_{type_}.parquet"
+    if compute_type not in ["gpu", "cpu"]:
+        raise ValueError(f"Invalid 'compute_type' specified: {compute_type}. Must be one of 'cpu', 'gpu'")
+    res = None
+    outfile = f"daic/runtime/{compute_type}/runtime_{dataset_type}.parquet"
     if from_raw or not os.path.exists(outfile):
         dfs = []
-        for f in glob.glob(f"daic/runtime/{type_}/*"):
+        for f in glob.glob(f"daic/runtime/{compute_type}/{dataset_type}/*.log"):
+            print(f"Reading {f} for dataset_type={dataset_type} and compute_type={compute_type}")
             temp_df = pd.read_json(f, lines=True)
-            temp_df["GPU"] = f.split("/")[-1].split("_")[0]
+            temp_df["source_file"] = f
+
+            temp_df["compute_type"] = compute_type
+            temp_df["dataset_type"] = dataset_type
+            if compute_type == "gpu":
+                temp_df["compute_unit"] = f.split("/")[-1].split("_")[0].replace(".log", "")
+            else:
+                temp_df["compute_unit"] = temp_df.num_cores.apply(lambda x: f"CPU {x}c")
+
             dfs.append(temp_df)
-        df = pd.concat(dfs)
-        df.to_parquet(outfile)
-        return df
+
+        if len(dfs) > 0:
+            df = pd.concat(dfs)
+            df = df[~df.operator.str.contains("fail")]
+            df["times"] = df["times"].apply(lambda x: x[1:])  # first repetition is warm up
+            df["times_mean"], df["times_std"] = df["times"].apply(np.mean), df["times"].apply(np.std)
+            print(f"writing to {outfile}")
+            df.to_parquet(outfile)
+            res = df
     else:
-        return pd.read_parquet(outfile)
+        res = pd.read_parquet(outfile)
+    return res
 
 
-def read_features_gpu(type_="synthetic") -> pd.DataFrame:
+def read_features(type_="synthetic") -> pd.DataFrame:
     features = pd.read_json(f"daic/features/features_{type_}.jsonl", lines=True)
     return features.reset_index(drop=True)
 
 
-def read_gpu_results(from_parquet=True) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def read_results(from_parquet=True) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Reads all results and preprocesses.
     """
-    outfile = "daic/all_gpus_preprocessed.parquet"
+    outfile = "daic/preprocessed.parquet"
     if from_parquet and os.path.exists(outfile):
         df = pd.read_parquet(outfile)
     else:
-        synth = read_runtime_gpu(type_="synthetic")
-        hamlet = read_runtime_gpu(type_="hamlet")
-        df = pd.concat([synth, hamlet])
+        runtimes, features, data_chars = [], [], []
+        for dataset_type in ["synthetic", "hamlet", "tpc_ai"]:
+            for compute_type in ["cpu", "gpu"]:
+                runtimes.append(read_runtime(dataset_type, compute_type, from_raw=False))
+            features.append(read_features(dataset_type))
+            data_chars.append(read_data_chars(dataset_type))
 
-        features_synth = read_features_gpu(type_="synthetic")
-        features_hamlet = read_features_gpu(type_="hamlet")
-        features = pd.concat([features_synth, features_hamlet])
-        
-        data_chars_synth = read_data_chars(type_='synthetic')
-        data_chars_hamlet = read_data_chars(type_='hamlet')
-        data_chars = pd.concat([data_chars_synth, data_chars_hamlet])
-        
+        data_chars = pd.concat(data_chars)
+        df = pd.concat([x for x in runtimes if x is not None])
+        features = pd.concat(features)
+
         df = preprocess(df, features, data_chars)
+        print(f"writing to {outfile}")
         df.to_parquet(outfile)
 
     return df
 
-def read_data_chars(type_='synthetic'):
-    data_chars = pd.read_json(f"daic/features/data_chars_{type_}.jsonl", lines=True)[['data_characteristics', 'dataset','join']]
+
+def read_data_chars(type_="synthetic"):
+    data_chars = pd.read_json(f"daic/features/data_chars_{type_}.jsonl", lines=True)[
+        ["data_characteristics", "dataset", "join"]
+    ]
     data_chars.reset_index(drop=True, inplace=True)
-    data_chars['dataset'] = data_chars['dataset'].str.replace("/user/data/generated/", "/mnt/data/synthetic/sigmod_extended")
-    data_chars = data_chars.merge(pd.json_normalize(data_chars.data_characteristics), left_index=True, right_index=True)
+    data_chars["dataset"] = data_chars["dataset"].str.replace(
+        "/user/data/generated/", "/mnt/data/synthetic/sigmod_extended"
+    )
+    data_chars = data_chars.merge(
+        pd.json_normalize(data_chars.data_characteristics), left_index=True, right_index=True
+    )
     return data_chars
 
 
-def _complexity_ratio(df):
-    # materialized complexities
-    materialized_complexity_dict = defaultdict(lambda: 0)
-    for dataset, operator, complexity in df[df.model == "materialized"][
-        ["dataset", "operator", "complexity"]
-    ].values:
-        materialized_complexity_dict[(dataset, operator)] = complexity
+def _ratio(df, column, output_column_name=None):
+    if not output_column_name:
+        output_column_name = column + "_ratio"
+    hardware_var = "compute_unit"
 
-    def calc_complexity_ratio(row):
-        if row[1] == "Materialization":
-            return None
-        val = materialized_complexity_dict[(row[0], row[1])]
-        if not val:
-            return None
-        return val / row[2]
+    merge_keys = ("dataset", "operator", "join", hardware_var)
+    df[column].fillna(0.0)
+    f = df[df.model == 'materialized'][[column, *merge_keys]]
+    m = df
 
-    df["complexity_ratio"] = df[["dataset", "operator", "complexity"]].apply(
-        calc_complexity_ratio, axis=1
-    )
+    lsuffix = "_materialized"
+    df = f.merge(m, on=merge_keys, how='inner', suffixes=(lsuffix,''))
+
+    df[output_column_name] = df[column + lsuffix] / df[column]
+    
     return df
-
-def _speedup(df):
-    hardware_var = "GPU"  # or 'num_cores'
-
-    baseline_lookup_dict = {
-        (dataset, operator, x): mean_time
-        for (dataset, operator, x, mean_time) in df[
-            ((df.model == "materialized") | (df.model == "baseline"))
-        ][["dataset", "operator", hardware_var, "times_mean"]].values
-    }
-
-    def calc_speedup(row) -> float:
-        if row[1] == "Materialization":
-            return 0.0
-        try:
-            baseline = baseline_lookup_dict[(row[0], row[1], row[2])]
-        except KeyError:
-            return None
-        return baseline / row[3]
-
-    df["speedup"] = (
-        df[["dataset", "operator", hardware_var, "times_mean"]]
-        .apply(calc_speedup, axis=1)
-        .dropna()
-    )
-    return df
-
 
 feature_names = [
     "mem_mat_read",  # 0: materialization(MA) memory read / memory bandwidth
@@ -153,17 +148,18 @@ feature_names = [
 
 model_operators = ["Linear Regression", "Gaussian", "Logistic Regression", "KMeans"]
 
+
 def preprocess(runtime: pd.DataFrame, features: pd.DataFrame, data_chars: pd.DataFrame):
     res = runtime
-    features = features[features.operator.isin(model_operators)]
-    res = res[res.operator.isin(model_operators)]
+    # features = features[features.operator.isin(model_operators)]
+    # res = res[res.operator.isin(model_operators)]
     res.reset_index(drop=True, inplace=True)
     if "join" not in res.columns:
         res["join"] = "preset"
 
-    res = _speedup(res)
-    res = _complexity_ratio(res)
-    
+    res = _ratio(res, "times_mean", "speedup")
+    res = _ratio(res, "complexity", "complexity_ratio2")
+
     res = res[res.model == "factorized"][
         [
             "dataset",
@@ -174,40 +170,39 @@ def preprocess(runtime: pd.DataFrame, features: pd.DataFrame, data_chars: pd.Dat
             "cardinality_T",
             "cardinality_S",
             "join",
-            "GPU",
+            "compute_unit",
+            "complexity_ratio",
+            "times_mean",
+            "source_file",
+            "dataset_type",
+            "compute_type",
             # 'r_T', 'c_T', 'r_S', 'c_S','Snonzero', 'Tnonzero'
         ]
     ]
-    
-    res["dataset_type"] = res["dataset"].apply(
-        lambda x: "synthetic" if x.startswith("/mnt/data") else "hamlet"
-    )
-    
+
     res["label"] = res.speedup > 1.0
-    
+
     res = pd.merge(
         res,
         features[["dataset", "operator", "features", "join"]],
-        how="right",
+        how="inner",
         on=["dataset", "operator", "join"],
     )
 
     if "parallelism" not in res.columns:
         res["parallelism"] = None
-    
-    processed_features = res[["features", "parallelism"]].apply(
-        lambda row: postprocessing_features(*row), axis=1
-    )
+
+    processed_features = res[["features", "parallelism"]].apply(lambda row: postprocessing_features(*row), axis=1)
     res[feature_names] = pd.DataFrame(processed_features.tolist(), index=res.index)
 
     overlap_cols = set(res.columns).intersection(data_chars.columns).difference({"dataset", "join"})
     overlap_cols.add("data_characteristics")
     data_chars = data_chars.drop(columns=overlap_cols).drop_duplicates(["dataset", "join"])
-    
-    res = pd.merge(res, data_chars, how='left', on=['dataset', "join"])   
 
-    
-    res["morpheusfi_p"] = res.sparsity_S.apply(len) 
+    res = pd.merge(res, data_chars, how="left", on=["dataset", "join"])
+
+    res["morpheusfi_p"] = res.sparsity_S.apply(len)
+
     def get_features_morpheusfi(dataset, sparsity_S: list, r_T, r_S):
         if dataset in ["yelp", "movie", "lastfm", "book"]:
             sparsity_Ri, r_Ri = sparsity_S, r_S
@@ -225,39 +220,42 @@ def preprocess(runtime: pd.DataFrame, features: pd.DataFrame, data_chars: pd.Dat
 
 
 def postprocessing_features(raw_features, parallelism=8000):
-    if not parallelism:
-        parallelism = 8000
-    raw_features = np.array(raw_features)
-    output = np.zeros(33)
-    if parallelism > 1000:
-        mem_band = 208 * 10**9  # st4 cluster
-    else:
-        mem_band = 689 * 10**9
-    output[0:4] = raw_features[0:4] / mem_band
-    output[4:7] = raw_features[4:7] / raw_features[24]
-    output[7:10] = raw_features[7:10] / raw_features[25]
-    output[10] = raw_features[10] / raw_features[24]
-    output[11] = raw_features[11] / raw_features[25]
-    output[12] = raw_features[12] / parallelism
-    # output[12]=raw_features[12]/raw_features[24]
-    # output[13]=raw_features[12]/raw_features[25]
-    # output[14]=raw_features[13]/raw_features[24]
-    # output[15]=raw_features[13]/raw_features[25]
-    output[15] = raw_features[13] / parallelism
-    output[16:20] = raw_features[14:18] / mem_band
-    output[20:24] = raw_features[[19, 20, 22, 23]] / mem_band
-    # output[24:26]=raw_features[[18,21]]/raw_features[24]
-    output[26:28] = raw_features[[18, 21]] / parallelism
-    # output[26:28]=raw_features[[18,21]]/raw_features[25]
-    output[28] = raw_features[24] / parallelism
-    output[29] = raw_features[25] / parallelism
-    output[30] = raw_features[24] / raw_features[25]
-    output[31:33] = raw_features[26:28]
+    try:
+        if not parallelism:
+            parallelism = 8000
+        raw_features = np.array(raw_features)
+        output = np.zeros(33)
+        if parallelism > 1000:
+            mem_band = 208 * 10**9  # st4 cluster
+        else:
+            mem_band = 689 * 10**9
+        output[0:4] = raw_features[0:4] / mem_band
+        output[4:7] = raw_features[4:7] / raw_features[24]
+        output[7:10] = raw_features[7:10] / raw_features[25]
+        output[10] = raw_features[10] / raw_features[24]
+        output[11] = raw_features[11] / raw_features[25]
+        output[12] = raw_features[12] / parallelism
+        # output[12]=raw_features[12]/raw_features[24]
+        # output[13]=raw_features[12]/raw_features[25]
+        # output[14]=raw_features[13]/raw_features[24]
+        # output[15]=raw_features[13]/raw_features[25]
+        output[15] = raw_features[13] / parallelism
+        output[16:20] = raw_features[14:18] / mem_band
+        output[20:24] = raw_features[[19, 20, 22, 23]] / mem_band
+        # output[24:26]=raw_features[[18,21]]/raw_features[24]
+        output[26:28] = raw_features[[18, 21]] / parallelism
+        # output[26:28]=raw_features[[18,21]]/raw_features[25]
+        output[28] = raw_features[24] / parallelism
+        output[29] = raw_features[25] / parallelism
+        output[30] = raw_features[24] / raw_features[25]
+        output[31:33] = raw_features[26:28]
+    except Exception as e:
+        output = np.zeros(33)
     return output
 
 
 def main():
-    df = read_gpu_results()
+    df = read_results(from_parquet=False)
     print(df)
 
 
