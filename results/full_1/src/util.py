@@ -8,6 +8,9 @@ import numpy as np
 
 pd.options.mode.chained_assignment = None  # default='warn'
 
+def _clean_synth_dataset_name(name: str):
+    "Strip anything before the actual data characteristics start"
+    return name[name.find("n_R"):]
 
 def read_runtime(dataset_type, compute_type, from_raw=False) -> pd.DataFrame:
     if dataset_type not in ["synthetic", "hamlet", "tpc_ai"]:
@@ -28,10 +31,14 @@ def read_runtime(dataset_type, compute_type, from_raw=False) -> pd.DataFrame:
 
             temp_df["compute_type"] = compute_type
             temp_df["dataset_type"] = dataset_type
+            
+            if dataset_type == "synthetic":
+                temp_df["dataset"] = temp_df.dataset.apply(_clean_synth_dataset_name)
+            
             if compute_type == "gpu":
                 temp_df["compute_unit"] = f.split("/")[-1].split("_")[0].replace(".log", "")
             else:
-                temp_df["compute_unit"] = temp_df.num_cores.apply(lambda x: f"CPU {x}c")
+                temp_df["compute_unit"] = temp_df.num_cores.apply(lambda x: f"CPU {x:02}c")
 
             dfs.append(temp_df)
 
@@ -50,6 +57,10 @@ def read_runtime(dataset_type, compute_type, from_raw=False) -> pd.DataFrame:
 
 def read_features(type_="synthetic") -> pd.DataFrame:
     features = pd.read_json(f"daic/features/features_{type_}.jsonl", lines=True)
+    
+    if type_ == "synthetic":
+        features["dataset"] = features["dataset"].apply(_clean_synth_dataset_name)
+    
     return features.reset_index(drop=True)
 
 
@@ -64,7 +75,7 @@ def read_results(from_parquet=True) -> Tuple[pd.DataFrame, pd.DataFrame]:
         runtimes, features, data_chars = [], [], []
         for dataset_type in ["synthetic", "hamlet", "tpc_ai"]:
             for compute_type in ["cpu", "gpu"]:
-                runtimes.append(read_runtime(dataset_type, compute_type, from_raw=False))
+                runtimes.append(read_runtime(dataset_type, compute_type, from_raw=True))
             features.append(read_features(dataset_type))
             data_chars.append(read_data_chars(dataset_type))
 
@@ -79,14 +90,15 @@ def read_results(from_parquet=True) -> Tuple[pd.DataFrame, pd.DataFrame]:
     return df
 
 
-def read_data_chars(type_="synthetic"):
-    data_chars = pd.read_json(f"daic/features/data_chars_{type_}.jsonl", lines=True)[
+def read_data_chars(type_="synthetic", base_path="/daic"):
+    data_chars = pd.read_json(f"{base_path}/features/data_chars_{type_}.jsonl", lines=True).groupby(["dataset", "join"]).head(1)[
         ["data_characteristics", "dataset", "join"]
     ]
     data_chars.reset_index(drop=True, inplace=True)
-    data_chars["dataset"] = data_chars["dataset"].str.replace(
-        "/user/data/generated/", "/mnt/data/synthetic/sigmod_extended"
-    )
+    
+    if type_ == "synthetic":
+        data_chars["dataset"] = data_chars["dataset"].apply(_clean_synth_dataset_name)
+        
     data_chars = data_chars.merge(
         pd.json_normalize(data_chars.data_characteristics), left_index=True, right_index=True
     )
@@ -158,7 +170,7 @@ def preprocess(runtime: pd.DataFrame, features: pd.DataFrame, data_chars: pd.Dat
         res["join"] = "preset"
 
     res = _ratio(res, "times_mean", "speedup")
-    res = _ratio(res, "complexity", "complexity_ratio2")
+    res = _ratio(res, "complexity", "complexity_ratio")
 
     res = res[res.model == "factorized"][
         [
