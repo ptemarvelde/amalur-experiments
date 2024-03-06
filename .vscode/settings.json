@@ -1,0 +1,4 @@
+{
+    "remote.SSH.defaultForwardedPorts": [],
+    "remote.SSH.remoteServerListenOnSocket": false
+}

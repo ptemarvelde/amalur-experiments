@@ -90,7 +90,8 @@ def read_results(from_parquet=True) -> Tuple[pd.DataFrame, pd.DataFrame]:
     return df
 
 
-def read_data_chars(type_="synthetic", base_path="/daic"):
+def read_data_chars(type_="synthetic", base_path="daic"):
+    print(f"reading {base_path}/features/data_chars_{type_}.jsonl")
     data_chars = pd.read_json(f"{base_path}/features/data_chars_{type_}.jsonl", lines=True).groupby(["dataset", "join"]).head(1)[
         ["data_characteristics", "dataset", "join"]
     ]
