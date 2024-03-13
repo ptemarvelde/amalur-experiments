@@ -8,9 +8,11 @@ import numpy as np
 
 pd.options.mode.chained_assignment = None  # default='warn'
 
+
 def _clean_synth_dataset_name(name: str):
     "Strip anything before the actual data characteristics start"
-    return name[name.find("n_R"):]
+    return name[name.find("n_R") :]
+
 
 def read_runtime(dataset_type, compute_type, from_raw=False) -> pd.DataFrame:
     if dataset_type not in ["synthetic", "hamlet", "tpc_ai"]:
@@ -31,10 +33,10 @@ def read_runtime(dataset_type, compute_type, from_raw=False) -> pd.DataFrame:
 
             temp_df["compute_type"] = compute_type
             temp_df["dataset_type"] = dataset_type
-            
+
             if dataset_type == "synthetic":
                 temp_df["dataset"] = temp_df.dataset.apply(_clean_synth_dataset_name)
-            
+
             if compute_type == "gpu":
                 temp_df["compute_unit"] = f.split("/")[-1].split("_")[0].replace(".log", "")
             else:
@@ -57,10 +59,11 @@ def read_runtime(dataset_type, compute_type, from_raw=False) -> pd.DataFrame:
 
 def read_features(type_="synthetic") -> pd.DataFrame:
     features = pd.read_json(f"daic/features/features_{type_}.jsonl", lines=True)
-    
+
     if type_ == "synthetic":
         features["dataset"] = features["dataset"].apply(_clean_synth_dataset_name)
-    
+
+    features.drop_duplicates(["dataset", "join", "operator"], inplace=True )
     return features.reset_index(drop=True)
 
 
@@ -92,14 +95,16 @@ def read_results(from_parquet=True) -> Tuple[pd.DataFrame, pd.DataFrame]:
 
 def read_data_chars(type_="synthetic", base_path="daic"):
     print(f"reading {base_path}/features/data_chars_{type_}.jsonl")
-    data_chars = pd.read_json(f"{base_path}/features/data_chars_{type_}.jsonl", lines=True).groupby(["dataset", "join"]).head(1)[
-        ["data_characteristics", "dataset", "join"]
-    ]
+    data_chars = (
+        pd.read_json(f"{base_path}/features/data_chars_{type_}.jsonl", lines=True)
+        .groupby(["dataset", "join"], as_index=False)
+        .first()[["data_characteristics", "dataset", "join"]]
+    )
     data_chars.reset_index(drop=True, inplace=True)
-    
+
     if type_ == "synthetic":
         data_chars["dataset"] = data_chars["dataset"].apply(_clean_synth_dataset_name)
-        
+
     data_chars = data_chars.merge(
         pd.json_normalize(data_chars.data_characteristics), left_index=True, right_index=True
     )
@@ -113,15 +118,16 @@ def _ratio(df, column, output_column_name=None):
 
     merge_keys = ("dataset", "operator", "join", hardware_var)
     df[column].fillna(0.0)
-    f = df[df.model == 'materialized'][[column, *merge_keys]]
+    f = df[df.model == "materialized"][[column, *merge_keys]]
     m = df
 
     lsuffix = "_materialized"
-    df = f.merge(m, on=merge_keys, how='inner', suffixes=(lsuffix,''))
+    df = f.merge(m, on=merge_keys, how="inner", suffixes=(lsuffix, ""))
 
     df[output_column_name] = df[column + lsuffix] / df[column]
-    
+
     return df
+
 
 feature_names = [
     "mem_mat_read",  # 0: materialization(MA) memory read / memory bandwidth
