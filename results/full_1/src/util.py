@@ -5,7 +5,7 @@ import os
 import glob
 from collections import defaultdict
 import numpy as np
-
+import json
 pd.options.mode.chained_assignment = None  # default='warn'
 
 
@@ -78,7 +78,7 @@ def read_results(from_parquet=True) -> Tuple[pd.DataFrame, pd.DataFrame]:
         runtimes, features, data_chars = [], [], []
         for dataset_type in ["synthetic", "hamlet", "tpc_ai"]:
             for compute_type in ["cpu", "gpu"]:
-                runtimes.append(read_runtime(dataset_type, compute_type, from_raw=True))
+                runtimes.append(read_runtime(dataset_type, compute_type, from_raw=False))
             features.append(read_features(dataset_type))
             data_chars.append(read_data_chars(dataset_type))
 
@@ -167,6 +167,18 @@ feature_names = [
 
 model_operators = ["Linear Regression", "Gaussian", "Logistic Regression", "KMeans"]
 
+def add_gpu_chars(df):
+    with open ("/home/pepijn/Documents/uni/y5/thesis/amalur/amalur-experiments/results/full_1/daic/features/gpu-characteristics.json") as f:
+        gpu_chars = json.load(f)
+    gpu_chars['1080'] = gpu_chars.pop('1080Ti')
+    gpu_chars['p100'] = gpu_chars.pop('P100')
+    gpu_chars['v100'] = gpu_chars.pop('V100')
+    gpu_chars['2080'] = gpu_chars.pop('2080Ti')
+    gpu_chars['a40'] = gpu_chars.pop('A40')
+    gpu_chars_df = pd.DataFrame(gpu_chars).T
+    gpu_chars_df.index.name = 'compute_unit'
+    df = df.merge(gpu_chars_df, how='left', left_on="compute_unit", right_on="compute_unit")
+    return df
 
 def preprocess(runtime: pd.DataFrame, features: pd.DataFrame, data_chars: pd.DataFrame):
     res = runtime
@@ -234,8 +246,8 @@ def preprocess(runtime: pd.DataFrame, features: pd.DataFrame, data_chars: pd.Dat
     res[["morpheusfi_q", "morpheusfi_eis", "morpheusfi_ns", "morpheusfi_nis"]] = res[
         ["dataset", "sparsity_S", "r_T", "r_S"]
     ].apply(lambda r: get_features_morpheusfi(*r), axis=1, result_type="expand")
-
-    return res
+    res = add_gpu_chars(res)
+    return res[~res.operator.isin(["Noop", "Materialization"])]
 
 
 def postprocessing_features(raw_features, parallelism=8000):

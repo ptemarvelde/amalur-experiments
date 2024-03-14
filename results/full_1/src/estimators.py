@@ -101,7 +101,7 @@ class MorpheusFI(Classifier):
         )
 
 def eval_model(model, X_test, y_test, speedup=None, plot=False):
-    print(f"Model {model.__class__}, test cols: {X_test.columns}")
+    print(f"Model {model.__class__}, {model.__class__.__name__}\n test cols: {X_test.columns}")
     y_pred = model.predict(X_test)
     result, fig = eval_result(y_test, y_pred=y_pred,speedup=speedup, model_name=model.__class__.__name__, plot=plot)
     if not fig and plot:
