@@ -247,6 +247,7 @@ def preprocess(runtime: pd.DataFrame, features: pd.DataFrame, data_chars: pd.Dat
         ["dataset", "sparsity_S", "r_T", "r_S"]
     ].apply(lambda r: get_features_morpheusfi(*r), axis=1, result_type="expand")
     res = add_gpu_chars(res)
+    res['materialized_times_mean'] = res.times_mean * res.speedup
     return res[~res.operator.isin(["Noop", "Materialization"])]
 
 

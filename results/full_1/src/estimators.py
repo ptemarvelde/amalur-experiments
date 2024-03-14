@@ -33,8 +33,7 @@ class Classifier:
         return res
 
     @abstractmethod
-    def optimize(self, *args):
-        ...
+    def optimize(self, *args): ...
 
     def feature_iterator(self, X) -> Generator[Tuple, None, None]:
         yield from X[self.feature_list].values
@@ -66,23 +65,23 @@ class MorpheusFI(Classifier):
     def __init__(self):
         super().__init__(
             [
-                "morpheusfi_q",     # Number of base tables with sparsity < 5%
-                "morpheusfi_p",     # Number of base tables
-                "morpheusfi_eis",   # List: Sparsity of Ri
-                "morpheusfi_ns",    # Number of samples in S
-                "morpheusfi_nis",   # List: Number of rows in Ri
+                "morpheusfi_q",  # Number of base tables with sparsity < 5%
+                "morpheusfi_p",  # Number of base tables
+                "morpheusfi_eis",  # List: Sparsity of Ri
+                "morpheusfi_ns",  # Number of samples in S
+                "morpheusfi_nis",  # List: Number of rows in Ri
             ]
         )
-    
+
     def optimize(self, q: int, p: int, eis: List[float], ns: int, nis: List[int]) -> bool:
         """Morpheus FI Heuristic decision rule. Choos factorization if this returns True.
-        
+
         In natural language:
         Choose factorization if either
             - The number of sparse base tables (q) is less than half of the total number of base tables (p)
             - For all dimension tables i the sparsity of Ri times the number of rows in S divided by the number of rows in Ri is greater than 1.
                 - If all dim tables are fairly dense and relatively small (compared to Fact table), then factorization is better.
-        
+
         S: Fact table
         Ri: Dimension table i feature matrix
 
@@ -100,15 +99,17 @@ class MorpheusFI(Classifier):
             math.floor(q >= p / 2) and all([ei * (ns / ni) > 1 for (ei, ni) in zip(eis, nis)])
         )
 
-def eval_model(model, X_test, y_test, speedup=None, plot=False):
+
+def eval_model(model, X_test, y_test, full_dataset=None, plot=True):
     print(f"Model {model.__class__}, {model.__class__.__name__}\n test cols: {X_test.columns}")
     y_pred = model.predict(X_test)
-    result, fig = eval_result(y_test, y_pred=y_pred,speedup=speedup, model_name=model.__class__.__name__, plot=plot)
+    result, fig, speedup_dict = eval_result(y_test, y_pred=y_pred, full_dataset=full_dataset, model_name=model.__class__.__name__, plot=plot)
     if not fig and plot:
         fig = ConfusionMatrixDisplay.from_estimator(model, X_test, y_test, cmap="bone", text_kw={"size": 20})
-    return result, fig
+    return result, fig, speedup_dict
 
-def eval_result(y_test, y_pred, speedup=None, model_name='', plot=False):
+
+def eval_result(y_test, y_pred, full_dataset=None, model_name="", plot=False):
     y_true = y_test.copy()
 
     scoring_functions = {
@@ -122,31 +123,56 @@ def eval_result(y_test, y_pred, speedup=None, model_name='', plot=False):
         res[name] = function(y_true, y_pred)
 
     fig = None
-    if speedup is not None:
+    if full_dataset is not None:
         y_true = pd.Series(y_true)
         y_pred = pd.Series(y_pred).astype(bool)
+        
+        if len(y_pred.unique()) < 2:
+            print("WARNING all predicted labels are the same: ", y_pred.unique())
+        
         y_pred.index = y_true.index
-
-        best_speedup = speedup[speedup > 1.0].mean()
+        true_speedup = full_dataset.speedup
         speedup_dict = {}
         res["speedup"] = speedup_dict
-        speedup_dict["tot_realized_speedup"] = speedup[y_pred].mean()
-        speedup_dict["best_speedup"] = len(speedup), best_speedup
+        # Speedup of positive samples
+        speedup_dict["pos_sample_speedup"] = true_speedup[y_pred].mean()
+        speedup_dict["pos_sample_speedup_count"] = len(true_speedup[y_pred])
+        
+        # Average speedup of all samples
+        # Average speedup of all samples
+        realized_speedup = true_speedup.copy()
+        realized_speedup[~y_pred] = 1.0
+        speedup_dict["avg_total_speedup"] = realized_speedup.mean()
+        
+        # Total time saved by choosing factorization over materialization
+        total_mat_time = full_dataset.materialized_times_mean.sum()
+        best_possible_time = full_dataset[['times_mean', 'materialized_times_mean']].min(axis=1).sum()
+        realized_time = full_dataset[~y_pred].materialized_times_mean.sum() + full_dataset[y_pred].times_mean.sum()
+        speedup_dict["tot_mat_time"] = total_mat_time
+        speedup_dict["tot_realized_speedup"] = total_mat_time / realized_time
+        speedup_dict["tot_best_speedup"] = total_mat_time / best_possible_time
+        speedup_dict["tot_realized_time"] = realized_time
+        speedup_dict["tot_best_time"] = best_possible_time
+        best_speedup = true_speedup[true_speedup > 1.0].mean()
+
+        speedup_dict["best_time_saved"] = len(true_speedup), best_speedup
+        
+        
         speedup_dict["TP"] = (
-            len(speedup[y_pred & y_true]),
-            speedup[y_pred & y_true].mean(),
+            len(true_speedup[y_pred & y_true]),
+            true_speedup[y_pred & y_true].mean(),
         )
         speedup_dict["FP"] = (
-            len(speedup[y_pred & ~y_true]),
-            speedup[y_pred & ~y_true].mean(),
+            len(true_speedup[y_pred & ~y_true]),
+            true_speedup[y_pred & ~y_true].mean(),
         )
         speedup_dict["TN"] = (
-            len(speedup[y_pred & ~y_true]),
-            speedup[~y_pred & ~y_true].mean(),
+            len(true_speedup[~y_pred & ~y_true]),
+            true_speedup[~y_pred & ~y_true].mean(),
         )
         speedup_dict["FN"] = (
-            len(speedup[y_pred & ~y_true]),
-            speedup[~y_pred & y_true].mean(),
+            len(true_speedup[~y_pred & y_true]),
+            true_speedup[~y_pred & y_true].mean(),
         )
 
         cf = confusion_matrix(y_true, y_pred)
@@ -183,4 +209,4 @@ def eval_result(y_test, y_pred, speedup=None, model_name='', plot=False):
             axes.set_xlabel("Predicted label")
             axes.set_ylabel("True label")
 
-    return res, fig
+    return res, fig, speedup_dict
