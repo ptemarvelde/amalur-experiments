@@ -15,7 +15,35 @@ from sklearn.pipeline import Pipeline
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
+from sklearn.linear_model import  LogisticRegression
+from sklearn.pipeline import make_pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.impute import SimpleImputer
 
+all_cat_features = ["compute_unit", "compute_type", "join", "_architecture", 'r_S', 'c_S', 'nnz_S', 'sparsity_S',
+       'morpheusfi_eis', 'morpheusfi_nis', 'operator', 'join']
+def feature_transform_pipe(model, X_train, fillna=False):
+    categorical_features = list(set(all_cat_features).intersection(X_train.columns))
+    print(categorical_features)
+
+    numeric_features = [x for x in X_train.columns if x not in categorical_features]
+    transformers = [("num", StandardScaler(), numeric_features), ("cat", OneHotEncoder(), categorical_features)]
+
+    preprocessor = ColumnTransformer(transformers=transformers)
+    if fillna:
+        imputer = SimpleImputer(missing_values=np.nan, strategy='constant', fill_value=0.0)
+        pipe = make_pipeline(preprocessor, imputer, model)
+    else:
+        pipe = make_pipeline(preprocessor, model)
+    return pipe
+
+
+def train_and_score(model, X_train, X_test, y_train, y_test, full_dataset=None, fillna=False):
+    pipe = feature_transform_pipe(model=model, X_train=X_train, fillna=fillna)
+    pipe.fit(X_train, y_train)
+    eval_model(pipe, X_test, y_test, full_dataset=full_dataset)
+    return pipe
 
 class Classifier:
     _estimator_type = "classifier"  # needed to make ConfusionMatrixDisplay work.
@@ -39,6 +67,64 @@ class Classifier:
     def feature_iterator(self, X) -> Generator[Tuple, None, None]:
         yield from X[self.feature_list].values
 
+class LogisticRegressionCustomBoundary(LogisticRegression):
+    def __init__(self, boundary=0.5, max_iter=300, class_weight='balanced'):
+        self.boundary = boundary
+        self.__class__.__name__ = f'MyLogReg (boundary at {boundary})'
+        super().__init__(max_iter=max_iter, class_weight=class_weight)
+    def predict(self, X):
+        return super().predict_proba(X)[:,1] > self.boundary
+
+def is_compute_unit_cpu(row):
+    return 'cpu' in row.lower()
+
+class SeparateLogisticRegression:
+    _estimator_type = "classifier" 
+    
+    def __init__(self, train, test, model_features):
+        
+        cpu_features = list(set(model_features).difference(["memory_bandwidth", "_cores", "processing_power_double_precision"]))
+        print(cpu_features)
+        
+        train_gpu = train[~train.compute_unit.apply(is_compute_unit_cpu)]
+        X_train_gpu, y_train_gpu = train_gpu[cpu_features], train_gpu["label"]
+        test_gpu = test[~test.compute_unit.apply(is_compute_unit_cpu)]
+        X_test_gpu, y_test_gpu = test_gpu[cpu_features], test_gpu["label"]
+        # create model for GPU
+        self.log_reg_gpu = train_and_score(
+            LogisticRegression(max_iter=500, class_weight="balanced"),
+            X_train_gpu,
+            X_test_gpu,
+            y_train_gpu,
+            y_test_gpu,
+            fillna=False,
+        )
+
+        train_cpu = train[train.compute_unit.apply(is_compute_unit_cpu)]
+        X_train_cpu, y_train_cpu = train_cpu[cpu_features], train_cpu["label"]
+        test_cpu = test[test.compute_unit.apply(is_compute_unit_cpu)]
+        X_test_cpu, y_test_cpu = test_cpu[cpu_features], test_cpu["label"]
+        # create model for CPU
+        self.log_reg_cpu = train_and_score(
+            LogisticRegression(max_iter=500, class_weight="balanced"),
+            X_train_cpu,
+            X_test_cpu,
+            y_train_cpu,
+            y_test_cpu,
+            fillna=False,
+        )
+        
+    def score(self, X, y):
+        pred = self.predict(X)
+        return np.count_nonzero((np.array(pred) != np.array(y))) / len(y)
+        
+    def predict(self, X):
+        X_cpu = X[X.isna().any(axis=1)]
+        X_gpu = X[~X.isna().any(axis=1)]        
+        X_cpu['pred'] = self.log_reg_cpu.predict(X_cpu)
+        X_gpu['pred'] = self.log_reg_gpu.predict(X_gpu)
+        pred = pd.concat([X_cpu, X_gpu]).reindex(index=X.index).pred
+        return pred
 
 class Morpheus(Classifier):
     tuple_ratio = 5
@@ -110,8 +196,8 @@ def eval_model(model, X_test, y_test, full_dataset=None, plot=True):
     result, fig, speedup_dict = eval_result(
         y_test, y_pred=y_pred, full_dataset=full_dataset, model_name=_get_model_name(model), plot=plot
     )
-    if not fig and plot:
-        fig = ConfusionMatrixDisplay.from_estimator(model, X_test, y_test, cmap="bone", text_kw={"size": 20})
+    # if not fig and plot:
+    #     fig = ConfusionMatrixDisplay.from_estimator(model, X_test, y_test, cmap="bone", text_kw={"size": 20})
     return result, fig, speedup_dict
 
 def speedup_metrics(index_selector: pd.Series, df: pd.DataFrame) -> dict:
@@ -138,7 +224,10 @@ def speedup_metrics(index_selector: pd.Series, df: pd.DataFrame) -> dict:
 
 def eval_result(y_test, y_pred, full_dataset=None, model_name="", plot=False):
     y_true = y_test.copy()
-
+    
+    if y_true.dtype == "float64":
+        y_true = y_true > 0.
+    
     scoring_functions = {
         "accuracy": accuracy_score,
         "precision": precision_score,
@@ -194,13 +283,6 @@ def eval_result(y_test, y_pred, full_dataset=None, model_name="", plot=False):
 
         group_counts = ["Counts: {0:0.0f}".format(value) for value in cf.flatten()]
         group_percentages = ["Percentages: {0:.2%}".format(value) for value in cf.flatten() / np.sum(cf)]
-        #  TODO total train (fact and mat times) for each group
-        #  Gives insight into how much time savings is lost.
-        group_fact_times = [
-            "F times: {0:.0f}".format(value) for value in [speedup_dict["TN"][0], speedup_dict["FP"][0]]
-        ]
-        group_mat_times = []
-        # END TODO
 
         group_spdup = [
             "Avg speedups: {0:.2f}".format(value)
