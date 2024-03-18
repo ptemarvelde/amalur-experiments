@@ -67,7 +67,7 @@ def read_features(type_="synthetic") -> pd.DataFrame:
     return features.reset_index(drop=True)
 
 
-def read_results(from_parquet=True) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def read_results(from_parquet=True, add_gpu_chars=True, overwrite=True) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Reads all results and preprocesses.
     """
@@ -86,12 +86,12 @@ def read_results(from_parquet=True) -> Tuple[pd.DataFrame, pd.DataFrame]:
         df = pd.concat([x for x in runtimes if x is not None])
         features = pd.concat(features)
 
-        df = preprocess(df, features, data_chars)
-        print(f"writing to {outfile}")
-        df.to_parquet(outfile)
+        df = preprocess(df, features, data_chars, add_gpu_chars=add_gpu_chars)
+        if overwrite:
+            print(f"writing to {outfile}")
+            df.to_parquet(outfile)
 
     return df
-
 
 def read_data_chars(type_="synthetic", base_path="daic"):
     print(f"reading {base_path}/features/data_chars_{type_}.jsonl")
@@ -111,10 +111,11 @@ def read_data_chars(type_="synthetic", base_path="daic"):
     return data_chars
 
 
-def _ratio(df, column, output_column_name=None):
+def _ratio(df, column, output_column_name=None, hardware_var=None):
     if not output_column_name:
         output_column_name = column + "_ratio"
-    hardware_var = "compute_unit"
+    if not hardware_var:
+        hardware_var = "compute_unit"
 
     merge_keys = ("dataset", "operator", "join", hardware_var)
     df[column].fillna(0.0)
@@ -167,7 +168,7 @@ feature_names = [
 
 model_operators = ["Linear Regression", "Gaussian", "Logistic Regression", "KMeans"]
 
-def add_gpu_chars(df):
+def read_gpu_chars():
     with open ("/home/pepijn/Documents/uni/y5/thesis/amalur/amalur-experiments/results/full_1/daic/features/gpu-characteristics.json") as f:
         gpu_chars = json.load(f)
     gpu_chars['1080'] = gpu_chars.pop('1080Ti')
@@ -175,12 +176,19 @@ def add_gpu_chars(df):
     gpu_chars['v100'] = gpu_chars.pop('V100')
     gpu_chars['2080'] = gpu_chars.pop('2080Ti')
     gpu_chars['a40'] = gpu_chars.pop('A40')
-    gpu_chars_df = pd.DataFrame(gpu_chars).T
-    gpu_chars_df.index.name = 'compute_unit'
-    df = df.merge(gpu_chars_df, how='left', left_on="compute_unit", right_on="compute_unit")
+    gpu_chars['a10g'] = gpu_chars.pop('A10G')
+    gpu_chars['1660'] = gpu_chars.pop('1660Ti')
+    gpu_chars_df = pd.DataFrame(gpu_chars).T.apply(pd.to_numeric, errors='ignore')
+    gpu_chars_df.rename(columns={x: f"gpu_{x}" for x in gpu_chars_df.columns}, inplace=True)
+    return gpu_chars_df
+
+def add_gpu_chars_to_df(df, gpu_col_name='compute_unit'):
+    gpu_chars_df = read_gpu_chars()
+    gpu_chars_df.index.name = gpu_col_name
+    df = df.merge(gpu_chars_df, how='left', left_on=gpu_col_name, right_on=gpu_col_name)
     return df
 
-def preprocess(runtime: pd.DataFrame, features: pd.DataFrame, data_chars: pd.DataFrame):
+def preprocess(runtime: pd.DataFrame, features: pd.DataFrame, data_chars: pd.DataFrame, add_gpu_chars=True):
     res = runtime
     # features = features[features.operator.isin(model_operators)]
     # res = res[res.operator.isin(model_operators)]
@@ -246,7 +254,8 @@ def preprocess(runtime: pd.DataFrame, features: pd.DataFrame, data_chars: pd.Dat
     res[["morpheusfi_q", "morpheusfi_eis", "morpheusfi_ns", "morpheusfi_nis"]] = res[
         ["dataset", "sparsity_S", "r_T", "r_S"]
     ].apply(lambda r: get_features_morpheusfi(*r), axis=1, result_type="expand")
-    res = add_gpu_chars(res)
+    if add_gpu_chars:
+        res = add_gpu_chars_to_df(res)
     res['materialized_times_mean'] = res.times_mean * res.speedup
     res['time_saved'] = res.materialized_times_mean - res.times_mean
     return res[~res.operator.isin(["Noop", "Materialization"])]
