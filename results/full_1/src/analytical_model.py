@@ -3,6 +3,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from src.util import read_data_chars, add_gpu_chars_to_df, read_gpu_chars, read_results
 import numpy as np
+np.seterr(divide='ignore', invalid='ignore')
 from typing import Tuple, List
 from sklearn.feature_selection import RFECV
 from sklearn.linear_model import LinearRegression
@@ -10,6 +11,7 @@ from sklearn.model_selection import KFold
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 from loguru import logger
+import copy
     
 def load_X() -> Tuple[pd.DataFrame, List[str], List[str]]:
     """
@@ -49,7 +51,7 @@ def load_X() -> Tuple[pd.DataFrame, List[str], List[str]]:
     df.drop(columns=['type'], inplace=True)
     return df, dep, indep
 
-def predict_linreg_ensemble(linreg_ensemble: dict, df: pd.DataFrame, X, y_col_names):
+def predict_linreg_ensemble(linreg_ensemble: dict, df: pd.DataFrame, X, y_col_names, split_by=['model', 'operator']):
     """Predict the results of the analytical model using a linear regression ensemble.
     
 
@@ -58,6 +60,7 @@ def predict_linreg_ensemble(linreg_ensemble: dict, df: pd.DataFrame, X, y_col_na
         df (pd.DataFrame): full dataframe that is iterated over (used for indexing X and y)
         X : Training data
         y_col_names : Target column names
+        split_by (List[str], optional): List of columns used to split. Defaults to ['model', 'operator'].
 
     Returns:
         pd.DataFrame: Dataframe with the predictions. (multiple columns if y has multiple columns)
@@ -65,17 +68,19 @@ def predict_linreg_ensemble(linreg_ensemble: dict, df: pd.DataFrame, X, y_col_na
     logger.info("Predicting results of the analytical model using a linear regression ensemble")
     y_preds = []
     assert set(X.index) == set(df.index), "Index of y and df should be the same"
-    for (type, operator), group_df in df.groupby(['model', 'operator']):
+    for split_value_tuple, group_df in df.groupby(split_by):
         preds = []
         idx = group_df.index
         
         for y_col in y_col_names:
-            preds.append( linreg_ensemble[(type, operator, y_col)].predict(X.loc[idx]))
+            dict_keys = (*split_value_tuple, y_col) if isinstance(split_by, list) else (split_value_tuple, y_col)
+            preds.append( linreg_ensemble[dict_keys].predict(X.loc[idx]))
         df_pred = pd.DataFrame(np.array(preds).T, columns=y_col_names, index=idx)
         y_preds.append(df_pred)
     return pd.concat(y_preds).sort_index()
 
-def create_linreg_ensemble(df: pd.DataFrame, X, y: pd.DataFrame) -> dict:
+
+def create_linreg_ensemble(df: pd.DataFrame, X, y: pd.DataFrame, clf_func=LinearRegression, clf_kwargs=None, split_by=['model', 'operator'], rfecv=True) -> dict:
     """ Create a linear regression ensemble for the analytical model.
         Uses sklearn recursive feature elimination with cross-validation to select features.
 
@@ -84,29 +89,38 @@ def create_linreg_ensemble(df: pd.DataFrame, X, y: pd.DataFrame) -> dict:
         features (List[str]): Features for X
         X: X
         y (pd.DataFrame): DataFrame with target (dataframe as we support multiple target vars)
+        clf (RegressionModel, optional): regression model. Defaults to LinearRegression().
+        split_by (List[str], optional): List of columns to split the dataframe by. Defaults to ['model', 'operator'].
+        rfecv (bool, optional): Whether to use recursive feature elimination with cross-validation. Defaults to True.
 
     Returns:
         dict: Dict with tuple of type, operator, and y_col as key and a linear regression model as value
     """
-    logger.info("Creating a linear regression ensemble for the analytical model")
+    logger.info(f"Creating a linear regression ensemble for the analytical model, splitting by {split_by}")
     linreg_ensemble = {}
-    
-    for (type, operator), group_df in df.groupby(['model', 'operator']):
-        for y_vals in [df[col] for col in y.columns]:
+    for (split_value_tuple), group_df in df.groupby(split_by):
+        y_col_names = y.columns if isinstance(y, pd.DataFrame) else [y.name]
+        for y_vals in [df[col] for col in y_col_names]:
+            kwargs_copy = copy.deepcopy(clf_kwargs)
             min_features_to_select = 5  # Minimum number of features to consider
-            clf = LinearRegression()
-            cv = KFold(5)
-
-            rfecv = RFECV(
-                estimator=clf,
-                step=1,
-                cv=cv,
-                min_features_to_select=min_features_to_select,
-                n_jobs=6,
-            )
+            if clf_kwargs:
+                for key, value in kwargs_copy.items():
+                    if callable(value):
+                        kwargs_copy[key] = value()
+            clf = clf_func(**kwargs_copy)
+            if rfecv:
+                cv = KFold(5)
+                clf = RFECV(
+                    estimator=clf,
+                    step=1,
+                    cv=cv,
+                    min_features_to_select=min_features_to_select,
+                    n_jobs=10,
+                )
 
             selector = group_df.index
-            rfecv.fit(X.loc[selector], y_vals.loc[selector])
-            linreg_ensemble[(type, operator, y_vals.name)] = rfecv
+            clf.fit(X.loc[selector], y_vals.loc[selector])
+            dict_keys = (*split_value_tuple, y_vals.name) if isinstance(split_by, list) else (split_value_tuple, y_vals.name)
+            linreg_ensemble[dict_keys] = clf
     logger.info(f"Created a linear regression ensemble for the analytical model with {len(linreg_ensemble)} models")
     return linreg_ensemble
