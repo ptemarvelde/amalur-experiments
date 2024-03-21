@@ -93,7 +93,7 @@
       "memory_bandwidth": "696",
       "processing_power_half_precision": "149.68",
       "processing_power_single_precision": "37.42",
-      "processing_power_double_precision": "1.168"
+      "processing_power_double_precision": "0.5846"
     },
     "A10G": {
       "_architecture": "Ampere",
