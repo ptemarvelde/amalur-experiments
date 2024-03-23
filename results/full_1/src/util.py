@@ -10,12 +10,15 @@ import json
 import seaborn as sns
 from matplotlib import pyplot as plt
 
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import accuracy_score, mean_squared_error, precision_score, recall_score, f1_score, confusion_matrix, r2_score
 from sklearn.pipeline import make_pipeline, Pipeline
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.model_selection import train_test_split
+from tqdm import tqdm
 from src.estimators import MorpheusFI
 
 from loguru import logger
@@ -78,7 +81,7 @@ def read_features(type_="synthetic") -> pd.DataFrame:
     if type_ == "synthetic":
         features["dataset"] = features["dataset"].apply(_clean_synth_dataset_name)
 
-    features.drop_duplicates(["dataset", "join", "operator"], inplace=True )
+    features.drop_duplicates(["dataset", "join", "operator"], inplace=True)
     return features.reset_index(drop=True)
 
 
@@ -109,25 +112,61 @@ def read_results(from_parquet=True, add_gpu_chars=True, overwrite=True) -> Tuple
     return df
 
 
+def read_train_test_validate_X_y(include_cpu=False):
+    df = read_results(from_parquet=True)[:10_000]
+    if not include_cpu:
+        df = df[df.compute_type == "gpu"]
+    df.drop(
+        columns=["speedup", "num_cores", "materialized_times_mean", "times_mean", "label", "dataset"], inplace=True
+    )
+    train, test, validate = train_test_validate_split(df, test_fraction=0.3)
+    X_train, y_train = train, train["time_saved"]
+    X_test, y_test = test, test["time_saved"]
+    X_validate, y_validate = validate, validate["time_saved"]
+
+    # preprocess
+    transform = feature_transform_pipe(model=None, X_train=X_train, fillna=True)
+    logger.info(f"Made train/test/validate split, now transforming Trainset")
+    X_train = transform.fit_transform(X_train, y_train)
+    logger.info("Transforming Testset")
+    X_test = transform.transform(X_test)
+    logger.info("Transforming Validate set")
+    X_validate = transform.transform(X_validate)
+
+    return X_train, y_train, X_test, y_test, X_validate, y_validate
+
+
 def describe(df, name):
     print(f"{name} set:")
     print(f"\tRecords: {len(df)}")
-    pos, neg = len(df[df.label]), len(df[~df.label])
+
+    y = df.time_saved > 0.0 if "time_saved" in df.columns else df.label
+
+    pos, neg = len(df[y]), len(df[~y])
     print(f"\tPositive (speedup > 1 with factorizing)/Negative: {pos}/{neg} = {pos/neg:.2f} s")
     print(f"\tDataset types: {df.dataset_type.unique()}")
     print(f"\Compute Units: {df.compute_unit.unique()}")
 
+
 def train_test_validate_split(df, test_fraction=0.3):
     df = df.copy()
-    df.drop(columns=['dataset', 'source_file'], inplace=True)
-    gpu_col = 'compute_unit'
-    assert 'p100' in df[gpu_col].unique()
-    validate = df[(df['compute_unit'] == 'p100') | (df['dataset_type'] != 'synthetic')]
+    to_drop = {"dataset", "source_file", "features"}.intersection(df.columns)
+    df.drop(columns=to_drop, inplace=True)
+    gpu_col = "compute_unit"
+    assert "p100" in df[gpu_col].unique()
+    validate = df[(df["compute_unit"] == "p100") | (df["dataset_type"] != "synthetic")]
     train, test = train_test_split(df[~df.index.isin(validate.index)], test_size=test_fraction, random_state=42)
-    describe(train, 'train')
-    describe(test, 'test')
-    describe(validate, 'validate')
+    to_drop = ["dataset_type", "compute_unit"]
+
+    describe(train, "train")
+    describe(test, "test")
+    describe(validate, "validate")
+
+    train.drop(columns=to_drop, inplace=True)
+    test.drop(columns=to_drop, inplace=True)
+    validate.drop(columns=to_drop, inplace=True)
     return train, test, validate
+
 
 def read_data_chars(type_="synthetic", base_path="daic"):
     print(f"reading {base_path}/features/data_chars_{type_}.jsonl")
@@ -204,25 +243,30 @@ feature_names = [
 
 model_operators = ["Linear Regression", "Gaussian", "Logistic Regression", "KMeans"]
 
+
 def read_gpu_chars():
-    with open ("/home/pepijn/Documents/uni/y5/thesis/amalur/amalur-experiments/results/full_1/daic/features/gpu-characteristics.json") as f:
+    with open(
+        "/home/pepijn/Documents/uni/y5/thesis/amalur/amalur-experiments/results/full_1/daic/features/gpu-characteristics.json"
+    ) as f:
         gpu_chars = json.load(f)
-    gpu_chars['1080'] = gpu_chars.pop('1080Ti')
-    gpu_chars['p100'] = gpu_chars.pop('P100')
-    gpu_chars['v100'] = gpu_chars.pop('V100')
-    gpu_chars['2080'] = gpu_chars.pop('2080Ti')
-    gpu_chars['a40'] = gpu_chars.pop('A40')
-    gpu_chars['a10g'] = gpu_chars.pop('A10G')
-    gpu_chars['1660'] = gpu_chars.pop('1660Ti')
-    gpu_chars_df = pd.DataFrame(gpu_chars).T.apply(pd.to_numeric, errors='ignore')
+    gpu_chars["1080"] = gpu_chars.pop("1080Ti")
+    gpu_chars["p100"] = gpu_chars.pop("P100")
+    gpu_chars["v100"] = gpu_chars.pop("V100")
+    gpu_chars["2080"] = gpu_chars.pop("2080Ti")
+    gpu_chars["a40"] = gpu_chars.pop("A40")
+    gpu_chars["a10g"] = gpu_chars.pop("A10G")
+    gpu_chars["1660"] = gpu_chars.pop("1660Ti")
+    gpu_chars_df = pd.DataFrame(gpu_chars).T.apply(pd.to_numeric, errors="ignore")
     gpu_chars_df.rename(columns={x: f"gpu_{x}" for x in gpu_chars_df.columns}, inplace=True)
     return gpu_chars_df
 
-def add_gpu_chars_to_df(df, gpu_col_name='compute_unit'):
+
+def add_gpu_chars_to_df(df, gpu_col_name="compute_unit"):
     gpu_chars_df = read_gpu_chars()
     gpu_chars_df.index.name = gpu_col_name
-    df = df.merge(gpu_chars_df, how='left', left_on=gpu_col_name, right_on=gpu_col_name)
+    df = df.merge(gpu_chars_df, how="left", left_on=gpu_col_name, right_on=gpu_col_name)
     return df
+
 
 def preprocess(runtime: pd.DataFrame, features: pd.DataFrame, data_chars: pd.DataFrame, add_gpu_chars=True):
     res = runtime
@@ -292,16 +336,18 @@ def preprocess(runtime: pd.DataFrame, features: pd.DataFrame, data_chars: pd.Dat
     ].apply(lambda r: get_features_morpheusfi(*r), axis=1, result_type="expand")
     if add_gpu_chars:
         res = add_gpu_chars_to_df(res)
-    res['materialized_times_mean'] = res.times_mean * res.speedup
-    res['time_saved'] = res.materialized_times_mean - res.times_mean
+    res["materialized_times_mean"] = res.times_mean * res.speedup
+    res["time_saved"] = res.materialized_times_mean - res.times_mean
+
     def extract_join(row):
-        if row['join'] == 'preset':
+        if row["join"] == "preset":
             try:
-                return row['dataset'].split('join=')[1].split('/')[0]
+                return row["dataset"].split("join=")[1].split("/")[0]
             except Exception:
-                return 'inner'
-        return row['join']
-    res['join'] = res[['join', 'dataset']].apply(extract_join, axis=1)
+                return "inner"
+        return row["join"]
+
+    res["join"] = res[["join", "dataset"]].apply(extract_join, axis=1)
     return res[~res.operator.isin(["Noop", "Materialization"])]
 
 
@@ -347,31 +393,72 @@ def main():
 
 if __name__ == "__main__":
     main()
-all_cat_features = ["compute_unit", "compute_type", "join", "_architecture", 'r_S', 'c_S', 'nnz_S', 'sparsity_S',
-                    'morpheusfi_eis', 'morpheusfi_nis', 'operator', 'join']
+
+
+class ExplodeColumns(BaseEstimator, TransformerMixin):
+    def __init__(self, columns, max_len):
+        self.columns = columns
+        self.max_len = max_len
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        for column in tqdm(self.columns, desc="Expanding columns"):
+            expanded = X[column].apply(pd.Series)
+            if expanded.shape[1] < self.max_len:
+                for i in range(self.max_len - expanded.shape[1]):
+                    expanded[f"missing_{i}"] = np.nan
+            elif expanded.shape[1] > self.max_len:
+                expanded = expanded.iloc[:, : self.max_len]
+            expanded = expanded.rename(columns=lambda x: f"{column}_{x}")
+            X = pd.concat([X[:], expanded[:]], axis=1)
+            X = X.drop(column, axis=1)
+        return X
+
+
+all_cat_features = [
+    "compute_unit",
+    "compute_type",
+    "join",
+    "_architecture",
+    "operator",
+]
 all_cat_features = [*all_cat_features, *[f"gpu_{x}" for x in all_cat_features]]
 
 
-def feature_transform_pipe(model, X_train, fillna=False):
+def feature_transform_pipe(model=None, X_train=None, fillna=False,):
+    if X_train is None:
+        raise ValueError("X_train must be provided to feature_transform_pipe")
     categorical_features = list(set(all_cat_features).intersection(X_train.columns))
-    logger.info(f"{categorical_features=}")
+    logger.info(f"{categorical_features}")
     # Convert categorical features to strings
-    numeric_features = [x for x in X_train.columns if x not in categorical_features]
-    transformers = [("num", StandardScaler(), numeric_features), ("cat", OneHotEncoder(handle_unknown='infrequent_if_exist'), categorical_features)]
+    list_features = [x for x in X_train.columns if X_train[x].apply(lambda x: isinstance(x, (list, np.ndarray))).any()]
+    numeric_features = [x for x in X_train.columns if x not in categorical_features + list_features]
+    transformers = [
+        ("num", StandardScaler(), numeric_features),
+        ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_features),
+        ("list", ExplodeColumns(list_features, 5), list_features),
+    ]
 
     preprocessor = ColumnTransformer(transformers=transformers)
     if fillna:
-        imputer = SimpleImputer(missing_values=np.nan, strategy='constant', fill_value=0.0)
+        imputer = SimpleImputer(missing_values=np.nan, strategy="constant", fill_value=0.0)
         pipe = make_pipeline(preprocessor, imputer, model)
     else:
         pipe = make_pipeline(preprocessor, model)
     return pipe
 
 
-def train_and_score(model, X_train, X_test, y_train, y_test, full_dataset=None, fillna=False):   
+def train_and_score(model, X_train, X_test, y_train, y_test, full_dataset=None, fillna=False, target_col=None):
     pipe = feature_transform_pipe(model=model, X_train=X_train, fillna=fillna)
     pipe.fit(X_train, y_train)
-    eval_model(pipe, X_test, y_test, full_dataset=full_dataset)
+    if target_col is None:
+        try:
+            target_col = y_test.name
+        except:
+            pass
+    eval_model(pipe, X_test, y_test, full_dataset=full_dataset, target_col=target_col)
     return pipe
 
 
@@ -379,14 +466,14 @@ def _get_model_name(model):
     return model.steps[-1][0] if isinstance(model, Pipeline) else model.__class__.__name__
 
 
-def eval_model(model, X_test, y_test, full_dataset=None, plot=True):
-    logger.info(f"Model {model.__class__}, {_get_model_name(model)}\n test cols: {X_test.columns}")
+def eval_model(model, X_test, y_test, full_dataset=None, plot=True, target_col=None):
+    logger.info(f"Model {model.__class__}, {_get_model_name(model)}\n test cols: {X_test.columns}, target_col: {target_col}")
     y_pred = pd.Series(model.predict(X_test), index=X_test.index)
-    
+
     logger.info(f"Score: {model.score(X_test, y_test)}")
 
     result, fig, speedup_dict_ = eval_result(
-        y_test, y_pred=y_pred, full_dataset=full_dataset, model_name=_get_model_name(model), plot=plot
+        y_test, y_pred=y_pred, full_dataset=full_dataset, model_name=_get_model_name(model), plot=plot, target_col=target_col
     )
     # if not fig and plot:
     #     fig = ConfusionMatrixDisplay.from_estimator(model, X_test, y_test, cmap="bone", text_kw={"size": 20})
@@ -416,24 +503,42 @@ def speedup_metrics(index_selector: pd.Series, df: pd.DataFrame) -> dict:
     }
 
 
-def eval_result(y_true, y_pred, full_dataset=None, model_name="", plot=False):
+def eval_result(y_true, y_pred, full_dataset=None, model_name="", plot=False, target_col=None):
     y_true = y_true.copy()
-
-    if y_true.dtype == "float64":
-        # logger.debug("Assuming y_true is 'time_saved', converting to bool")
-        y_true = y_true > 0.
-        
-    if y_pred.dtype == "float64":
-        logger.info("Assuming y_pred is 'time_saved', converting to bool")
-        y_pred = y_pred > 0.
+    res = {}
+    if target_col is None:
+        target_col = y_true.name
     
+    if (np.issubdtype(y_true.dtype, np.number) and np.issubdtype(y_pred.dtype, np.number)):
+        scoring_functions = {
+            "r2": r2_score,
+            "mean_squared_error": mean_squared_error,
+        }
+        for name, function in scoring_functions.items():
+            res[name] = function(y_true, y_pred)
+    
+    if target_col is not None:        
+        if target_col == 'time_saved':
+            y_true = y_true > 0.0 if np.issubdtype(y_true.dtype, np.number) else y_true
+            y_pred = y_pred > 0.0 if np.issubdtype(y_pred.dtype, np.number) else y_pred
+        elif target_col == 'speedup':
+            y_true = y_true > 1.0 if np.issubdtype(y_true.dtype, np.number) else y_true
+            y_pred = y_pred > 1.0 if np.issubdtype(y_pred.dtype, np.number) else y_pred
+
+    # if y_true.dtype == "float64":
+    #     # logger.debug("Assuming y_true is 'time_saved', converting to bool")
+    #     y_true = y_true > 0.0
+
+    # if y_pred.dtype == "float64":
+    #     logger.info("Assuming y_pred is 'time_saved', converting to bool")
+    #     y_pred = y_pred > 0.0
+
     scoring_functions = {
         "accuracy": accuracy_score,
         "precision": precision_score,
         "recall": recall_score,
         "f1": f1_score,
     }
-    res = {}
     for name, function in scoring_functions.items():
         res[name] = function(y_true, y_pred)
 
@@ -444,6 +549,7 @@ def eval_result(y_true, y_pred, full_dataset=None, model_name="", plot=False):
             y_true = pd.Series(y_true)
         if not isinstance(y_pred, pd.Series):
             y_pred = pd.Series(y_pred).astype(bool)
+            y_pred.index=y_true.index
 
         if len(y_pred.unique()) < 2:
             logger.warning("WARNING all predicted labels are the same: ", y_pred.unique())
@@ -452,12 +558,8 @@ def eval_result(y_true, y_pred, full_dataset=None, model_name="", plot=False):
         timing_df = full_dataset[["times_mean", "materialized_times_mean", "speedup"]]
 
         speedup_dict.update(
-            **{
-                f"y_true_{key}": value for key, value in speedup_metrics(y_true, timing_df).items()
-            },
-            **{
-                f"y_pred_{key}": value for key, value in speedup_metrics(y_pred, timing_df).items()
-            }
+            **{f"y_true_{key}": value for key, value in speedup_metrics(y_true, timing_df).items()},
+            **{f"y_pred_{key}": value for key, value in speedup_metrics(y_pred, timing_df).items()},
         )
 
         speedup_dict["TP"] = (
@@ -509,7 +611,7 @@ def eval_result(y_true, y_pred, full_dataset=None, model_name="", plot=False):
         if plot:
             fig, axes = plt.subplots(1, 1, sharex=True, sharey=True, figsize=(5, 4.2))
             fig.suptitle(model_name)
-            axes.set_title(f"Realized speedup of positive samples: {speedup_dict['y_pred_speedup_real']:.2f}")
+            axes.set_title(f"Real speedup of positive samples: {speedup_dict['y_pred_speedup_real']:.2f}, (max: {speedup_dict['y_true_speedup_real']:.2f})")
             sns.heatmap(cf, annot=labels, cmap="Blues", fmt="", ax=axes, cbar=True)
             axes.set_yticklabels(["Materialize", "Factorize"], rotation=90)
             axes.set_xticklabels(["Materialize", "Factorize"])
@@ -531,7 +633,7 @@ def full_eval(trained_models, X_test, y_test, test, dataset_name=""):
     best_speedup = 0
     for model in result_compare.keys():
         speedup = result_compare[model]["speedup"]
-        best_speedup = speedup['y_true_speedup_real']
+        best_speedup = speedup["y_true_speedup_real"]
         new_dict = {}
         for key, value in speedup.items():
             new_key = key + "_abs"
@@ -541,9 +643,9 @@ def full_eval(trained_models, X_test, y_test, test, dataset_name=""):
             new_dict[key] = value[1] if isinstance(value, tuple) else value
         result_compare[model].update(new_dict)
 
-    test_result_compare = pd.DataFrame(result_compare).T.drop(columns=['speedup'])
-    test_result_compare['model'] = test_result_compare.index
-    melted_df = pd.melt(test_result_compare, id_vars='model', var_name='metric', value_name='metric_value')
+    test_result_compare = pd.DataFrame(result_compare).T.drop(columns=["speedup"])
+    test_result_compare["model"] = test_result_compare.index
+    melted_df = pd.melt(test_result_compare, id_vars="model", var_name="metric", value_name="metric_value")
 
     fig, axs = plt.subplot_mosaic("AAAB", figsize=(14, 6))
 
@@ -551,22 +653,32 @@ def full_eval(trained_models, X_test, y_test, test, dataset_name=""):
         print(melted_df.head())
         print(melted_df[melted_df.metric.apply(lambda x: x in metrics)])
         ax.set_axisbelow(True)
-        ax.grid(axis='y')
-        ax = sns.barplot(data=melted_df[melted_df.metric.apply(lambda x: x in metrics)], x='metric', y='metric_value',
-                         hue='model',
-                         #  palette=sns.color_palette('flare'),
-                         ax=ax)
+        ax.grid(axis="y")
+        ax = sns.barplot(
+            data=melted_df[melted_df.metric.apply(lambda x: x in metrics)],
+            x="metric",
+            y="metric_value",
+            hue="model",
+            #  palette=sns.color_palette('flare'),
+            ax=ax,
+        )
         if not legend:
             ax.get_legend().remove()
         # Add metric values as text on top of every bar
         for p in ax.patches:
-            ax.annotate(f"{p.get_height():.2f}", (p.get_x() + p.get_width() / 2., p.get_height()), ha='center',
-                        va='center', xytext=(0, 5), textcoords='offset points')
+            ax.annotate(
+                f"{p.get_height():.2f}",
+                (p.get_x() + p.get_width() / 2.0, p.get_height()),
+                ha="center",
+                va="center",
+                xytext=(0, 5),
+                textcoords="offset points",
+            )
 
-    plot_metrics(axs['A'], ['accuracy', 'precision', 'recall', 'f1'])
-    plot_metrics(axs['B'], ['y_pred_speedup_real'], legend=False)
+    plot_metrics(axs["A"], ["accuracy", "precision", "recall", "f1"])
+    plot_metrics(axs["B"], ["y_pred_speedup_real"], legend=False)
     print(best_speedup)
-    axs['B'].axhline(best_speedup, ls='--', color='red', label='Maximum achievable speedup')
+    axs["B"].axhline(best_speedup, ls="--", color="red", label="Maximum achievable speedup")
 
-    fig.suptitle(f'Performance metrics {dataset_name}')
+    fig.suptitle(f"Performance metrics {dataset_name}")
     return fig, test_result_compare

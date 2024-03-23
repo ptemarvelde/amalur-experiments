@@ -37,7 +37,9 @@ def load_X() -> Tuple[pd.DataFrame, List[str], List[str]]:
     operator_metrics_df['math_cost_seconds'] = operator_metrics_df['sm_active_cycles_sum'] / operator_metrics_df['sm_frequency_weighted_mean']
     operator_metrics_df['dram_bytes_sum'] = (operator_metrics_df['dram_bytes_read_sum'] + operator_metrics_df['dram_bytes_write_sum'])
     operator_metrics_df['mem_cost_seconds'] = operator_metrics_df['dram_bytes_sum'] / operator_metrics_df['memory_throughput_byte_weighted_mean']
-    
+    operator_metrics_df['ops_per_second'] = ((operator_metrics_df['compute_throughput_weighted_mean'] / 100) * (operator_metrics_df['gpu_processing_power_double_precision'] * 1e12))
+    operator_metrics_df['arithmetic_intensity'] = ((operator_metrics_df['ops_per_second'] * (operator_metrics_df.duration_sum / 1e9)) / (operator_metrics_df['dram_bytes_sum'] ))
+
     col_filtered = result_df.drop(columns=set(result_df.columns).intersection(operator_metrics_df.columns) - {'dataset', 'operator'})
     df = operator_metrics_df.merge(col_filtered, on=['dataset', 'operator'], how='left')
     df = df.groupby(['dataset', 'operator', 'gpu', 'type']).first().reset_index()
