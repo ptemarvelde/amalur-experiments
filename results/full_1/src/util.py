@@ -149,6 +149,7 @@ def describe(df, name):
 
 
 def train_test_validate_split(df, test_fraction=0.3):
+    """In the thesis what is called the test set is actually the validation set. The test set here the synthetic data."""
     df = df.copy()
     to_drop = {"dataset", "source_file", "features"}.intersection(df.columns)
     df.drop(columns=to_drop, inplace=True)

@@ -1,7 +1,8 @@
+from abc import abstractmethod
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-from src.util import read_data_chars, add_gpu_chars_to_df, read_gpu_chars, read_results
+from src.util import read_data_chars, add_gpu_chars_to_df, read_gpu_chars, read_results, model_operators
 import numpy as np
 np.seterr(divide='ignore', invalid='ignore')
 from typing import Tuple, List
@@ -126,3 +127,28 @@ def create_linreg_ensemble(df: pd.DataFrame, X, y: pd.DataFrame, clf_func=Linear
             linreg_ensemble[dict_keys] = clf
     logger.info(f"Created a linear regression ensemble for the analytical model with {len(linreg_ensemble)} models")
     return linreg_ensemble
+
+
+# class ModelCost:
+#     """
+#     Calculate the cost of a model using the analytical model.
+#     """
+#     def __init__(self, operator_cost_clf):
+#         self.operator_cost_clf = operator_cost_clf
+        
+#     def calculate_cost(self, model_type, characteristics):
+#         # TODO check if all characteristics are present
+#         if model_type not in model_operators:
+#             raise ValueError(f"Model type {model_type} not in model operators")
+        
+#     def linear_regression(self, characteristics):
+#         # AM = amalurmatrix, fact or mat
+#         # (X* self.w)                         = AM(rows, cols) * w(cols, 1)                   = fact/mat LMM
+#         # (X* self.w) - Y                     = prev(rows,1) - Y(rows,1)                      = element wise subtract
+#         # X.T * (X* self.w - Y)               = AMT(cols, rows) * prev(rows,1)                = fact/mat LMM T
+#         # gamma * (X.T * (X * self.w - Y))    = w(cols, 1) * prev(cols, 1)                    = elementwise multiplication    
+#         # self.w -= gamma * (X.T * (X * self.w - Y)) = w(cols, 1) - prev(cols, 1)             = elementwise subtract
+#         self.operator_cost("LMM", characteristics, (cols, 1))
+#         self.operator_cost("LMM_T", characteristics, (rows, 1))
+#         self.operator_cost("elementwise", rows, 1)
+#         self.operator_cost("elementwise", cols, 1) * 2
