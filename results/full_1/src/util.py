@@ -19,7 +19,7 @@ from sklearn.pipeline import make_pipeline, Pipeline
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
-from src.estimators import MorpheusFI
+from src.estimators import Amalur, Morpheus, MorpheusFI
 
 from loguru import logger
 import copy
@@ -155,7 +155,7 @@ def train_test_validate_split(df, test_fraction=0.3):
     df.drop(columns=to_drop, inplace=True)
     gpu_col = "compute_unit"
     assert "p100" in df[gpu_col].unique()
-    validate = df[(df["compute_unit"] == "p100") | (df["dataset_type"] != "synthetic")]
+    validate = df[((df["compute_unit"] == "p100") | (df["dataset_type"] != "synthetic")) & (df.operator.isin(model_operators))]
     train, test = train_test_split(df[~df.index.isin(validate.index)], test_size=test_fraction, random_state=42)
     to_drop = ["dataset_type", "compute_unit"]
 
@@ -525,6 +525,9 @@ def eval_result(y_true, y_pred, full_dataset=None, model_name="", plot=False, ta
         elif target_col == 'speedup':
             y_true = y_true > 1.0 if np.issubdtype(y_true.dtype, np.number) else y_true
             y_pred = y_pred > 1.0 if np.issubdtype(y_pred.dtype, np.number) else y_pred
+        elif target_col == 'label':
+            y_true = y_true.astype(bool)
+            y_pred = y_pred.astype(bool)
 
     # if y_true.dtype == "float64":
     #     # logger.debug("Assuming y_true is 'time_saved', converting to bool")
@@ -620,6 +623,11 @@ def eval_result(y_true, y_pred, full_dataset=None, model_name="", plot=False, ta
             axes.set_ylabel("True label")
     return res, fig, speedup_dict
 
+def eval_sota_models(X, y, full_dataset):
+    results = {}
+    for model in [MorpheusFI(), Morpheus(), Amalur()]:
+        results[_get_model_name(model)] = eval_model(model, X, y, full_dataset=full_dataset, target_col='label', plot=False)[0]
+    return results
 
 def full_eval(trained_models, X_test, y_test, test, dataset_name=""):
     speedups, result_compare = {}, {}
