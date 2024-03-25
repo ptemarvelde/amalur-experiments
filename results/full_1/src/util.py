@@ -5,6 +5,7 @@ import os
 import glob
 from collections import defaultdict
 import numpy as np
+np.random.seed(42)
 import json
 
 import seaborn as sns

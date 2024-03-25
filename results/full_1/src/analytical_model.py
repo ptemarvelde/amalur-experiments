@@ -1,6 +1,6 @@
-from abc import abstractmethod
 import pandas as pd
-import seaborn as sns
+import numpy as np
+np.random.seed(42)
 import matplotlib.pyplot as plt
 from src.util import read_data_chars, add_gpu_chars_to_df, read_gpu_chars, read_results, model_operators
 import numpy as np
@@ -82,6 +82,15 @@ def predict_linreg_ensemble(linreg_ensemble: dict, df: pd.DataFrame, X, y_col_na
         y_preds.append(df_pred)
     return pd.concat(y_preds).sort_index()
 
+class LinRegEnsemble:
+    def __init__(self, df: pd.DataFrame, X, y: pd.DataFrame, clf_func=LinearRegression, clf_kwargs=None, split_by=['model', 'operator'], rfecv=True):
+        self.linreg_ensemble = create_linreg_ensemble(df, X, y, clf_func, clf_kwargs, split_by, rfecv)
+        self.split_by = split_by
+        self.y_col_names = y.columns if isinstance(y, pd.DataFrame) else [y.name]
+        
+    def predict(self, df, X):
+        return predict_linreg_ensemble(self.linreg_ensemble, df, X, self.y_col_names, self.split_by)
+
 
 def create_linreg_ensemble(df: pd.DataFrame, X, y: pd.DataFrame, clf_func=LinearRegression, clf_kwargs=None, split_by=['model', 'operator'], rfecv=True) -> dict:
     """ Create a linear regression ensemble for the analytical model.
@@ -112,13 +121,14 @@ def create_linreg_ensemble(df: pd.DataFrame, X, y: pd.DataFrame, clf_func=Linear
                         kwargs_copy[key] = value()
             clf = clf_func(**kwargs_copy)
             if rfecv:
-                cv = KFold(5)
+                cv = KFold(5, random_state=42)
                 clf = RFECV(
                     estimator=clf,
                     step=1,
                     cv=cv,
                     min_features_to_select=min_features_to_select,
                     n_jobs=10,
+                    random_state=42
                 )
 
             selector = group_df.index
