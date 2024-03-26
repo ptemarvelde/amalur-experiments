@@ -206,6 +206,32 @@ def _ratio(df, column, output_column_name=None, hardware_var=None, override_merg
 
     return df
 
+model_operators = ["Linear Regression", "Gaussian", "Logistic Regression", "KMeans"]
+
+
+def read_gpu_chars():
+    with open(
+        "/home/pepijn/Documents/uni/y5/thesis/amalur/amalur-experiments/results/full_1/daic/features/gpu-characteristics.json"
+    ) as f:
+        gpu_chars = json.load(f)
+    gpu_chars["1080"] = gpu_chars.pop("1080Ti")
+    gpu_chars["p100"] = gpu_chars.pop("P100")
+    gpu_chars["v100"] = gpu_chars.pop("V100")
+    gpu_chars["2080"] = gpu_chars.pop("2080Ti")
+    gpu_chars["a40"] = gpu_chars.pop("A40")
+    gpu_chars["a10g"] = gpu_chars.pop("A10G")
+    gpu_chars["1660"] = gpu_chars.pop("1660Ti")
+    gpu_chars_df = pd.DataFrame(gpu_chars).T.apply(pd.to_numeric, errors="ignore")
+    gpu_chars_df.rename(columns={x: f"gpu_{x}" for x in gpu_chars_df.columns}, inplace=True)
+    return gpu_chars_df
+
+
+def add_gpu_chars_to_df(df, gpu_col_name="compute_unit"):
+    gpu_chars_df = read_gpu_chars()
+    gpu_chars_df.index.name = gpu_col_name
+    df = df.merge(gpu_chars_df, how="left", left_on=gpu_col_name, right_on=gpu_col_name)
+    return df
+
 
 feature_names = [
     "mem_mat_read",  # 0: materialization(MA) memory read / memory bandwidth
@@ -243,31 +269,50 @@ feature_names = [
     "fr",  # 32: Morpheous FR
 ]
 
-model_operators = ["Linear Regression", "Gaussian", "Logistic Regression", "KMeans"]
+def postprocessing_features(raw_features, parallelism=8000):
 
+    # [standard, factorized, read_standard, write_standard, read_factorized, write_factorized]
+    try:
+        if not parallelism:
+            parallelism = 8000
+        raw_features = np.array(raw_features)
+        output = np.zeros(33)
+        
+        if len(raw_features) == 6:
+            output[28:30] = raw_features[0:2] # complexity standard, fact
+            output[0:2]= raw_features[2:4] # mat read, mat_write
+            output[2:4] = raw_features[4:6] # fact read, fact write            
+        else:
+            
+            # if parallelism > 1000:
+            #     mem_band = 208 * 10**9  # st4 cluster
+            # else:
+            #     mem_band = 689 * 10**9
+            mem_band = 1 # Computed after joining with hardware chars
+            output[0:4] = raw_features[0:4] / mem_band
+            output[4:7] = raw_features[4:7] / raw_features[24]
+            output[7:10] = raw_features[7:10] / raw_features[25]
+            output[10] = raw_features[10] / raw_features[24]
+            output[11] = raw_features[11] / raw_features[25]
+            output[12] = raw_features[12] / parallelism
+            # output[12]=raw_features[12]/raw_features[24]
+            # output[13]=raw_features[12]/raw_features[25]
+            # output[14]=raw_features[13]/raw_features[24]
+            # output[15]=raw_features[13]/raw_features[25]
+            output[15] = raw_features[13] / parallelism
+            output[16:20] = raw_features[14:18] / mem_band
+            output[20:24] = raw_features[[19, 20, 22, 23]] / mem_band
+            # output[24:26]=raw_features[[18,21]]/raw_features[24]
+            output[26:28] = raw_features[[18, 21]] / parallelism
+            # output[26:28]=raw_features[[18,21]]/raw_features[25]
+            output[28] = raw_features[24] / parallelism
+            output[29] = raw_features[25] / parallelism
+            output[30] = raw_features[24] / raw_features[25]
+            output[31:33] = raw_features[26:28]
+    except Exception as e:
+        output = np.zeros(33)
+    return output
 
-def read_gpu_chars():
-    with open(
-        "/home/pepijn/Documents/uni/y5/thesis/amalur/amalur-experiments/results/full_1/daic/features/gpu-characteristics.json"
-    ) as f:
-        gpu_chars = json.load(f)
-    gpu_chars["1080"] = gpu_chars.pop("1080Ti")
-    gpu_chars["p100"] = gpu_chars.pop("P100")
-    gpu_chars["v100"] = gpu_chars.pop("V100")
-    gpu_chars["2080"] = gpu_chars.pop("2080Ti")
-    gpu_chars["a40"] = gpu_chars.pop("A40")
-    gpu_chars["a10g"] = gpu_chars.pop("A10G")
-    gpu_chars["1660"] = gpu_chars.pop("1660Ti")
-    gpu_chars_df = pd.DataFrame(gpu_chars).T.apply(pd.to_numeric, errors="ignore")
-    gpu_chars_df.rename(columns={x: f"gpu_{x}" for x in gpu_chars_df.columns}, inplace=True)
-    return gpu_chars_df
-
-
-def add_gpu_chars_to_df(df, gpu_col_name="compute_unit"):
-    gpu_chars_df = read_gpu_chars()
-    gpu_chars_df.index.name = gpu_col_name
-    df = df.merge(gpu_chars_df, how="left", left_on=gpu_col_name, right_on=gpu_col_name)
-    return df
 
 
 def preprocess(runtime: pd.DataFrame, features: pd.DataFrame, data_chars: pd.DataFrame, add_gpu_chars=True):
@@ -344,48 +389,13 @@ def preprocess(runtime: pd.DataFrame, features: pd.DataFrame, data_chars: pd.Dat
     def extract_join(row):
         if row["join"] == "preset":
             try:
-                return row["dataset"].split("join=")[1].split("/")[0]
+                return row["dataset"].split("join=")[1].split("/")[0].split("-")[0]
             except Exception:
                 return "inner"
         return row["join"]
 
     res["join"] = res[["join", "dataset"]].apply(extract_join, axis=1)
     return res[~res.operator.isin(["Noop", "Materialization"])]
-
-
-def postprocessing_features(raw_features, parallelism=8000):
-    try:
-        if not parallelism:
-            parallelism = 8000
-        raw_features = np.array(raw_features)
-        output = np.zeros(33)
-        if parallelism > 1000:
-            mem_band = 208 * 10**9  # st4 cluster
-        else:
-            mem_band = 689 * 10**9
-        output[0:4] = raw_features[0:4] / mem_band
-        output[4:7] = raw_features[4:7] / raw_features[24]
-        output[7:10] = raw_features[7:10] / raw_features[25]
-        output[10] = raw_features[10] / raw_features[24]
-        output[11] = raw_features[11] / raw_features[25]
-        output[12] = raw_features[12] / parallelism
-        # output[12]=raw_features[12]/raw_features[24]
-        # output[13]=raw_features[12]/raw_features[25]
-        # output[14]=raw_features[13]/raw_features[24]
-        # output[15]=raw_features[13]/raw_features[25]
-        output[15] = raw_features[13] / parallelism
-        output[16:20] = raw_features[14:18] / mem_band
-        output[20:24] = raw_features[[19, 20, 22, 23]] / mem_band
-        # output[24:26]=raw_features[[18,21]]/raw_features[24]
-        output[26:28] = raw_features[[18, 21]] / parallelism
-        # output[26:28]=raw_features[[18,21]]/raw_features[25]
-        output[28] = raw_features[24] / parallelism
-        output[29] = raw_features[25] / parallelism
-        output[30] = raw_features[24] / raw_features[25]
-        output[31:33] = raw_features[26:28]
-    except Exception as e:
-        output = np.zeros(33)
-    return output
 
 
 def main():
