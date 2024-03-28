@@ -15,14 +15,15 @@ from sklearn.model_selection import KFold
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 from loguru import logger
-import swifter
+from tqdm import tqdm
+tqdm.pandas()
 import copy
 
 from memoization import cached
 from joblib import hash as hash_pandas
 
 
-def load_X() -> Tuple[pd.DataFrame, List[str], List[str]]:
+def load_X(metric_file="/home/pepijn/Documents/uni/y5/thesis/amalur/amalur-experiments/amalur-factorization/profiling/operator_metrics.parquet") -> Tuple[pd.DataFrame, List[str], List[str]]:
     """
     Load data for training the analytical model
     Returns:
@@ -42,7 +43,7 @@ def load_X() -> Tuple[pd.DataFrame, List[str], List[str]]:
     #     'comp_colsum', 'comp_mat', 'comp_fac', 'comp_ratio', 'tr', 'fr'], inplace=True)
 
     operator_metrics_df = pd.read_parquet(
-        "/home/pepijn/Documents/uni/y5/thesis/amalur/amalur-experiments/amalur-factorization/profiling/operator_metrics.parquet"
+        metric_file
     ).reset_index()
     # operator_metrics_df = add_gpu_chars_to_df(operator_metrics_df, 'gpu')
     operator_metrics_df["math_cost_seconds"] = (
@@ -263,7 +264,7 @@ class ModelCost:
         ]).reshape(2,)
 
     def predict(self, df: pd.DataFrame):
-        col = df.swifter.apply(lambda x: self.calculate_cost(x["operator"], x.drop(columns=["operator"])), axis=1)
+        col = df.progress_apply(lambda x: self.calculate_cost(x["operator"], x.drop(columns=["operator"])), axis=1)
         return col
 
     # Currently disregard operators that are the same between the fact/mat case

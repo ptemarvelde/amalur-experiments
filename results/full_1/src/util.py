@@ -567,7 +567,7 @@ def eval_result(y_true, y_pred, full_dataset=None, model_name="", plot=False, ta
             y_pred.index=y_true.index
 
         if len(y_pred.unique()) < 2:
-            logger.warning("WARNING all predicted labels are the same: ", y_pred.unique())
+            logger.warning(f"WARNING all predicted labels are the same: {y_pred.unique()}")
 
         true_speedup = full_dataset.speedup
         timing_df = full_dataset[["times_mean", "materialized_times_mean", "speedup"]]
