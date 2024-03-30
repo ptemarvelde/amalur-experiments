@@ -16,6 +16,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 from loguru import logger
 from tqdm import tqdm
+
 tqdm.pandas()
 import copy
 
@@ -23,7 +24,9 @@ from memoization import cached
 from joblib import hash as hash_pandas
 
 
-def load_X(metric_file="/home/pepijn/Documents/uni/y5/thesis/amalur/amalur-experiments/amalur-factorization/profiling/operator_metrics.parquet") -> Tuple[pd.DataFrame, List[str], List[str]]:
+def load_X(
+    metric_file="/home/pepijn/Documents/uni/y5/thesis/amalur/amalur-experiments/amalur-factorization/profiling/operator_metrics.parquet",
+) -> Tuple[pd.DataFrame, List[str], List[str]]:
     """
     Load data for training the analytical model
     Returns:
@@ -42,9 +45,7 @@ def load_X(metric_file="/home/pepijn/Documents/uni/y5/thesis/amalur/amalur-exper
     #     'mem_read_colsum', 'mem_write_colsum', '24', '25', 'comp_rowsum',
     #     'comp_colsum', 'comp_mat', 'comp_fac', 'comp_ratio', 'tr', 'fr'], inplace=True)
 
-    operator_metrics_df = pd.read_parquet(
-        metric_file
-    ).reset_index()
+    operator_metrics_df = pd.read_parquet(metric_file).reset_index()
     # operator_metrics_df = add_gpu_chars_to_df(operator_metrics_df, 'gpu')
     operator_metrics_df["math_cost_seconds"] = (
         operator_metrics_df["sm_active_cycles_sum"] / operator_metrics_df["sm_frequency_weighted_mean"]
@@ -74,13 +75,12 @@ def load_X(metric_file="/home/pepijn/Documents/uni/y5/thesis/amalur/amalur-exper
     data_characteristics_cols = col_filtered.select_dtypes(include=[np.number]).columns
     operator_metrics_cols = set(df.select_dtypes(include=np.number)) - set(data_characteristics_cols)
     runtime_targets = ["speedup", "times_mean", "times_std", "time_saved", "materialized_times_mean"]
-    dep = [
+    dep = [x for x in operator_metrics_cols if not x.startswith("gpu_") and not x in runtime_targets]
+    indep = [
         x
-        for x in operator_metrics_cols
-        if not x.startswith("gpu_")
-        and not x in runtime_targets
+        for x in set(df.select_dtypes(include=np.number))
+        if x not in {*dep, *runtime_targets} and x not in ["dataset"]
     ]
-    indep = [x for x in set(df.select_dtypes(include=np.number)) if x not in {*dep, *runtime_targets} and x not in ["dataset"]]
     logger.info(
         f"Loaded data for analytical model with {len(dep)} dependent variables and {len(indep)} independent variables"
     )
@@ -116,16 +116,18 @@ def predict_linreg_ensemble(linreg_ensemble: dict, df: pd.DataFrame, X, y_col_na
         y_preds.append(df_pred)
     return pd.concat(y_preds).sort_index()
 
+
 def predict_single_row_linreg_ensemble(linreg_ensemble, X, y_col_names, split_by=["model", "operator"]):
     preds = []
     split_tuple = list(X[col] for col in split_by)
     X = pd.DataFrame(X).T
-    X=X.drop(columns=split_by)
+    X = X.drop(columns=split_by)
     for y_col in y_col_names:
         dict_keys = (*split_tuple, y_col) if isinstance(split_by, list) else (X[split_by], y_col)
         preds.append(linreg_ensemble[dict_keys].predict(X))
     df_pred = pd.DataFrame(np.array(preds).T, columns=y_col_names, index=X.index)
     return df_pred
+
 
 class LinRegEnsemble:
     def __init__(
@@ -137,7 +139,7 @@ class LinRegEnsemble:
         clf_kwargs={},
         split_by=["model", "operator"],
         rfecv=True,
-        target_to_pred_func=None
+        target_to_pred_func=None,
     ):
         self.linreg_ensemble = create_linreg_ensemble(df, X, y, clf_func, clf_kwargs, split_by, rfecv)
         self.split_by = split_by
@@ -209,8 +211,10 @@ def create_linreg_ensemble(
     logger.info(f"Created a linear regression ensemble for the analytical model with {len(linreg_ensemble)} models")
     return linreg_ensemble
 
-def custom_hash(self, operator, X):
-    return operator + hash_pandas(X)
+
+def custom_hash(self, operator, X, mat=False):
+    return operator + hash_pandas(X) + str(mat)
+
 
 class ModelCost:
     """
@@ -229,7 +233,7 @@ class ModelCost:
 
     def calculate_cost(self, model_type, characteristics):
         # TODO check if all characteristics are present
-        
+
         if model_type == "Linear Regression":
             costs = self.linear_regression(characteristics)
         elif model_type == "Gaussian":
@@ -241,67 +245,107 @@ class ModelCost:
         else:
             raise ValueError(f"Model type {model_type} not recognized. only {model_operators} are supported.")
 
-        return {
-            **costs,
-            "sum": np.sum(list(costs.values()),axis=0)
-        }
+        return {**costs, "sum": np.sum(list(costs.values()), axis=0)}
 
     @cached(custom_key_maker=custom_hash)
-    def operator_cost(self, operator, X) -> Tuple[float, float]:
+    def operator_cost(self, operator, X, mat=False) -> Tuple[float, float]:
         """Predict cost for operator for given scenario X
         Returns:
             _type_: Tuple (mat_cost, fact_cost)
         """
         if operator == "elementwise":
             operator = "Left multiply"
-        X['operator'] = operator
-        X['model'] = "materialized"
-        X2  = X.copy()
-        X2['model'] = "factorized"
-        return np.array([
-            self.operator_cost_clf.predict(self.dataset, X),
-            self.operator_cost_clf.predict(self.dataset, X2)
-        ]).reshape(2,)
+
+        X["operator"] = operator
+        X["model"] = "materialized"
+
+        if mat:
+            res = (self.operator_cost_clf.predict(self.dataset, X),)
+            res = np.array([res, res])
+        else:
+            X2 = X.copy()
+            X2["model"] = "factorized"
+            res = np.array(
+                [self.operator_cost_clf.predict(self.dataset, X), self.operator_cost_clf.predict(self.dataset, X2)]
+            )
+
+        return res.reshape(
+            2,
+        )
 
     def predict(self, df: pd.DataFrame):
         col = df.progress_apply(lambda x: self.calculate_cost(x["operator"], x.drop(columns=["operator"])), axis=1)
         return col
 
     # Currently disregard operators that are the same between the fact/mat case
-    def linear_regression(self, characteristics):
+    def linear_regression(self, characteristics, iter=20):
         # AM = amalurmatrix, fact or mat
         # (X* self.w)                         = AM(rows, cols) * w(cols, 1)                   = fact/mat LMM
         # (X* self.w) - Y                     = prev(rows,1) - Y(rows,1)                      = element wise subtract
         # X.T * (X* self.w - Y)               = AMT(cols, rows) * prev(rows,1)                = fact/mat LMM T
         # gamma * (X.T * (X * self.w - Y))    = w(cols, 1) * prev(cols, 1)                    = elementwise multiplication
         # self.w -= gamma * (X.T * (X * self.w - Y)) = w(cols, 1) - prev(cols, 1)             = elementwise subtract
-        costs = defaultdict(lambda : np.array([0., 0.]))
+        costs = defaultdict(lambda: np.array([0.0, 0.0]))
         costs["LMM"] += self.operator_cost("LMM", characteristics)
         costs["LMM T"] += self.operator_cost("LMM T", characteristics)
-        # self.operator_cost("elementwise", rows, 1)
-        # self.operator_cost("elementwise", cols, 1) * 2
+        costs["elementwise"] += self.operator_cost("elementwise", characteristics, mat=True) * 3
+        
+        for key in costs:
+            costs[key] *= iter
         return costs
 
-    def logistic_regression(self, characteristics):
+    def logistic_regression(self, characteristics, iter=5):
         # TODO figure out why logreg speedup is twice linreg speedup
-        costs = defaultdict(lambda : np.array([0., 0.]))
+        costs = defaultdict(lambda: np.array([0.0, 0.0]))
         costs["LMM"] += self.operator_cost("LMM", characteristics)
         costs["LMM T"] += self.operator_cost("LMM T", characteristics)
-        # self.operator_cost("elementwise", rows, 1)
-        # self.operator_cost("elementwise", cols, 1) * 2
+        costs["elementwise"] += self.operator_cost("elementwise", characteristics, mat=True) * 5
+        for key in costs:
+            costs[key] *= iter
         return costs
-    
-    def kmeans(self, characteristics):
-        costs = defaultdict(lambda : np.array([0., 0.]))
-        costs['exp'] += self.operator_cost("elementwise", characteristics)
-        costs['rowSums'] += self.operator_cost("Row summation", characteristics)
-        costs['mult'] += self.operator_cost("Right multiply", characteristics)
-        costs['MM'] += self.operator_cost("LMM T", characteristics)
-        return costs
-    
-    def gnmf(self, characteristics):
-        costs = defaultdict(lambda : np.array([0., 0.]))
-        costs['MM'] += self.operator_cost("LMM", characteristics)
-        costs['MM'] += self.operator_cost("RMM", characteristics)
-        return costs
+
+    def kmeans(self, characteristics, k=3, iter=5):
+        costs = defaultdict(lambda: np.array([0.0, 0.0]))
+
+        costs["exp"] += self.operator_cost("elementwise", characteristics, mat=True)# C^2
+        costs["colSums"] += self.operator_cost("Column summation", characteristics, mat=True)# colsums(C^2)
+        costs["mult"] += self.operator_cost("Right multiply", characteristics, mat=True)# 1_{r_x x1} x colsums(C^2)
+        costs["MM"] += self.operator_cost("LMM", characteristics, mat=True) # T_2 * C
+        costs["elementwise"] += self.operator_cost("elementwise", characteristics, mat=True) * 2# D_X - (T_2 * C) + (1_{r_x x1} x colsums(C^2))
         
+        costs["rowSums"] += self.operator_cost("elementwise", characteristics, mat=True) # rowMin(D)
+        costs["MM"] += self.operator_cost("LMM", characteristics, mat=True)# 1_{1xk} x rowMin(D)
+        costs["elementwise"] += self.operator_cost("elementwise", characteristics, mat=True)# D == (1_{1xk} x rowMin(D))
+        
+        costs["MM"] += self.operator_cost("LMM T", characteristics) # X.T * A
+        costs["colSums"] += self.operator_cost("Column summation", characteristics, mat=True)# colSums(A)
+        costs["MM"] += self.operator_cost("LMM", characteristics, mat=True) # 1_{1c_Xx1} x colSums(A)
+        costs["elementwise"] += self.operator_cost("elementwise", characteristics, mat=True)# (X.T * A) / (1_{1c_Xx1} x colSums(A))
+        
+        for key in costs:
+            costs[key] *= iter
+        
+        # init operations happen once
+        costs["exp"] += self.operator_cost("elementwise", characteristics) # X^2
+        costs["rowSums"] += self.operator_cost("Row summation", characteristics)
+        costs["LMM"] += self.operator_cost("LMM", characteristics, mat=True)# rowsums x 1_{1xk}
+        costs["mult"] += self.operator_cost("Right multiply", characteristics) #2xX
+        
+        return costs
+
+    def gnmf(self, characteristics, r=2, iter=5):
+        costs = defaultdict(lambda: np.array([0.0, 0.0]))
+        
+        costs["MM"] += self.operator_cost("LMM", characteristics) # W_TX
+        costs["MM"] += self.operator_cost("RMM", characteristics, mat=True) * 2 # WTWH
+        costs["elementwise"] += self.operator_cost("elementwise", characteristics, mat=True) * 2# H x (W_TX / WTWH)
+        
+        costs["MM"] += self.operator_cost("RMM", characteristics) # XH^T
+        costs["MM"] += self.operator_cost("RMM", characteristics, mat=True) * 2 # W(HH.T)
+        costs["elementwise"] += self.operator_cost("elementwise", characteristics, mat=True)# X x (XHT/WHH.T )
+        
+        for key in costs:
+            costs[key] *= iter
+            
+        return costs
+

@@ -578,22 +578,14 @@ def eval_result(y_true, y_pred, full_dataset=None, model_name="", plot=False, ta
             **{f"y_pred_{key}": value for key, value in speedup_metrics(y_pred, timing_df).items()},
         )
 
-        speedup_dict["TP"] = (
-            len(true_speedup[y_pred & y_true]),
-            true_speedup[y_pred & y_true].mean(),
-        )
-        speedup_dict["FP"] = (
-            len(true_speedup[y_pred & ~y_true]),
-            true_speedup[y_pred & ~y_true].mean(),
-        )
-        speedup_dict["TN"] = (
-            len(true_speedup[~y_pred & ~y_true]),
-            true_speedup[~y_pred & ~y_true].mean(),
-        )
-        speedup_dict["FN"] = (
-            len(true_speedup[~y_pred & y_true]),
-            true_speedup[~y_pred & y_true].mean(),
-        )
+        for label, condition in [("TP", y_pred & y_true), ("FP", y_pred & ~y_true), ("TN", ~y_pred & ~y_true), ("FN", ~y_pred & y_true)]:
+            loc = condition
+            speedup_dict[label] = (
+            len(true_speedup.loc[loc]),
+            true_speedup.loc[loc].mean(),
+            full_dataset.loc[loc].time_saved.sum()
+            )
+        
         res["speedup"] = copy.deepcopy(speedup_dict)
 
         cf = confusion_matrix(y_true, y_pred)
