@@ -1,0 +1,16 @@
+[submodule "amalur-cost-estimation"]
+	path = amalur-cost-estimation
+	url = https://github.com/delftdata/amalur-cost-estimation.git
+[submodule "amalur-factorization"]
+	path = amalur-factorization
+	url = https://github.com/delftdata/amalur-factorization.git
+[submodule "MorpheusPy"]
+	path = MorpheusPy
+	url = https://github.com/ADALabUCSD/MorpheusPy.git
+[submodule "sparse_dot"]
+	path = sparse_dot
+	url = https://github.com/flatironinstitute/sparse_dot.git
+[submodule "amalur-data-generator"]
+	path = amalur-data-generator
+	url = https://github.com/delftdata/amalur-data-generator.git
+	branch = experiments-pepijn

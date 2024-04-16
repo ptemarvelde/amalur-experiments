@@ -1,9 +1,9 @@
 logs/
-amalur-cost-estimation
-amalur-factorization
-MorpheusPy
-sparse_dot
-/amalur-data-generator/
+# amalur-cost-estimation
+# amalur-factorization
+# MorpheusPy
+# sparse_dot
+# /amalur-data-generator/
 /sigmod24/
 /amalur-cost-estimation/experiments/configs/
 .idea/
