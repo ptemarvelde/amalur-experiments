@@ -1,5 +1,5 @@
 #!/bin/bash
-# docker build -f Dockerfile.daic -t amalur:daic .
+# Conver the docker image to a singularity image and sync to daic
 docker pull ghcr.io/ptemarvelde/amalur-daic:latest
 dir=$(pwd)
 cd ~/Documents/uni/y5/thesis/daic
