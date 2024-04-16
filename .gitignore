@@ -4,6 +4,8 @@ logs/
 # MorpheusPy
 # sparse_dot
 # /amalur-data-generator/
+.idea
+.vscode
 /sigmod24/
 /amalur-cost-estimation/experiments/configs/
 .idea/
